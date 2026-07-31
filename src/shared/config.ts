@@ -37,6 +37,7 @@ export interface AppConfig {
     };
     dashboardVisible: boolean; // DASH-04
     catalogPanelOpen: boolean;
+    hostPanelOpen: boolean; // Ctrl+0 toggle
     leftPanelWidth: number; // 160..340
     rightPanelWidth: number; // 200..480
   };
