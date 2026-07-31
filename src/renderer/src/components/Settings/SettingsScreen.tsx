@@ -659,6 +659,7 @@ function HotkeysSection(): JSX.Element {
       { keys: 'Ctrl + ,', action: t('settings.hk.openSettings') },
       { keys: 'Ctrl + H', action: t('settings.hk.openHistory') },
       { keys: 'Ctrl + L', action: t('settings.hk.openCatalog') },
+      { keys: 'Ctrl + 0', action: t('settings.hk.toggleHostPanel') },
       { keys: 'Ctrl + Space', action: t('settings.hk.snippetPalette') },
       { keys: 'Ctrl + F', action: t('settings.hk.search') },
       { keys: 'Ctrl + W', action: t('settings.hk.closeTab') },

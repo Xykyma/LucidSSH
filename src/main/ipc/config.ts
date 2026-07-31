@@ -31,6 +31,7 @@ const WRITABLE: Record<string, (v: unknown, cfg: AppConfig) => void> = {
     setNum(v, 0, 86400, (n) => (cfg.ui.notifications.longCommandThresholdSec = n)),
   'ui.dashboardVisible': (v, cfg) => setBool(v, (b) => (cfg.ui.dashboardVisible = b)),
   'ui.catalogPanelOpen': (v, cfg) => setBool(v, (b) => (cfg.ui.catalogPanelOpen = b)),
+  'ui.hostPanelOpen': (v, cfg) => setBool(v, (b) => (cfg.ui.hostPanelOpen = b)),
   'ui.leftPanelWidth': (v, cfg) => setNum(v, 160, 340, (n) => (cfg.ui.leftPanelWidth = n)),
   'ui.rightPanelWidth': (v, cfg) => setNum(v, 200, 480, (n) => (cfg.ui.rightPanelWidth = n)),
   'terminal.font': (v, cfg) => {

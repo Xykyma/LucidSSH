@@ -81,6 +81,9 @@ function AppBody(): JSX.Element {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         openQuickConnect();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault();
+        void update('ui.hostPanelOpen', !(config?.ui.hostPanelOpen ?? true));
       } else if (
         // ВРЕМЕННЫЙ dev-хук для визуальной проверки WelcomeScreen без удаления
         // хостов (пачка 9 дизайн-аудита) — import.meta.env.DEV вырезается
@@ -97,7 +100,7 @@ function AppBody(): JSX.Element {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openSettings, openHistory, openHelp, openQuickConnect]);
+  }, [openSettings, openHistory, openHelp, openQuickConnect, config, update]);
 
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId);
   const leftRef = useRef<HTMLElement>(null);
@@ -107,6 +110,7 @@ function AppBody(): JSX.Element {
   const leftWidth = config?.ui.leftPanelWidth ?? 220;
   const rightWidth = config?.ui.rightPanelWidth ?? 320;
   const catalogOpen = config?.ui.catalogPanelOpen ?? false;
+  const hostPanelOpen = config?.ui.hostPanelOpen ?? true;
 
   return (
     <div className="flex h-full flex-col">
@@ -117,14 +121,16 @@ function AppBody(): JSX.Element {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
-          <HostPanel ref={leftRef} width={leftWidth} />
-          <ResizeDivider
-            side="left"
-            targetRef={leftRef}
-            min={160}
-            max={340}
-            onCommit={(w) => void update('ui.leftPanelWidth', w)}
-          />
+          {hostPanelOpen && <HostPanel ref={leftRef} width={leftWidth} />}
+          {hostPanelOpen && (
+            <ResizeDivider
+              side="left"
+              targetRef={leftRef}
+              min={160}
+              max={340}
+              onCommit={(w) => void update('ui.leftPanelWidth', w)}
+            />
+          )}
           <TerminalArea />
           {catalogOpen && sessions.length > 0 && (
             <>

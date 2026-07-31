@@ -30,6 +30,7 @@ export function createDefaultConfig(appVersion: string): AppConfig {
       },
       dashboardVisible: true,
       catalogPanelOpen: true,
+      hostPanelOpen: true,
       leftPanelWidth: 220,
       rightPanelWidth: 320
     },

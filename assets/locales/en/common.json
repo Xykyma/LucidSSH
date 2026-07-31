@@ -655,7 +655,8 @@
       "copy": "Copy selection",
       "paste": "Paste from clipboard",
       "closePanel": "Close panel / dialog",
-      "guide": "Open guide"
+      "guide": "Open guide",
+      "toggleHostPanel": "Hide / show connection panel"
     },
     "about": {
       "version": "Version {{version}}",
