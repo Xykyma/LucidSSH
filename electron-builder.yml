@@ -34,6 +34,12 @@ win:
       arch:
         - x64
   artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Network
+  maintainer: xyisgory@email.com
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
