@@ -1,0 +1,44 @@
+name: Build and Release Windows
+
+on:
+  push:
+    tags:
+      - 'v*'          # запуск при теге v1.0.0 и т.д.
+
+permissions:
+  contents: write      # нужно для создания релиза
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: Установка Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Установка npm-зависимостей
+        run: npm ci
+
+      - name: Пересборка нативных модулей под Electron (Windows)
+        run: npx electron-rebuild -f -w better-sqlite3,keytar
+
+      - name: Сборка Windows-установщика
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Отключаем встроенную публикацию electron-builder, чтобы не конфликтовать
+        # с созданием релиза через softprops/action-gh-release
+        run: npm run dist -- --win -c.publish=null
+
+      - name: Создать Release и загрузить установщик
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
