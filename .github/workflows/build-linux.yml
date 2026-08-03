@@ -37,18 +37,59 @@ jobs:
         env:
           ELECTRON_DISABLE_SANDBOX: 1
 
+      - name: Загрузка AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: LucidSSH-AppImage
+          path: release/*.AppImage
+          retention-days: 7
+      
+      - name: Загрузка .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: LucidSSH-deb
+          path: release/*.deb
+          retention-days: 7
+      
+      - name: Загрузка .rpm
+        uses: actions/upload-artifact@v4
+        with:
+          name: LucidSSH-rpm
+          path: release/*.rpm
+          retention-days: 7
+
+      - name: Загрузка .tar.gz
+        uses: actions/upload-artifact@v4
+        with:
+          name: LucidSSH-tar.gz
+          path: release/*.tar.gz
+          retention-days: 7
+      
+      - name: Загрузка .snap
+        uses: actions/upload-artifact@v4
+        with:
+          name: LucidSSH-snap
+          path: release/*.snap
+          retention-days: 7
+      
+      - name: Загрузка .apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: LucidSSH-apk
+          path: release/*.apk
+          retention-days: 7
+
+      - name: Загрузка .zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: LucidSSH-zip
+          path: release/*.zip
+          retention-days: 7
+
       - name: Загрузка артефактов
         uses: actions/upload-artifact@v4
         with:
           name: LucidSSH-linux
           path: |
-            release/*.AppImage
-            release/*.deb
-            release/*.rpm
-            release/*.snap
-            release/*.tar.gz
             release/*.pkg
-            release/*.apk
-            release/*.tar.gz
-            release/*.zip
           retention-days: 7
