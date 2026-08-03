@@ -45,7 +45,6 @@ linux:
     - apk
     - tar.gz
     - zip
-    - 7z
   category: Network
   maintainer: xyisgory@email.com
   syncDesktopName: true

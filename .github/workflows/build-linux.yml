@@ -42,8 +42,13 @@ jobs:
         with:
           name: LucidSSH-linux
           path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.rpm
-            dist/*.snap
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.snap
+            release/*.tar.gz
+            release/*.pkg
+            release/*.apk
+            release/*.tar.gz
+            release/*.zip
           retention-days: 7

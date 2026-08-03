@@ -49,7 +49,6 @@ jobs:
             release/*.apk
             release/*.tar.gz
             release/*.zip
-            release/*.7z
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
