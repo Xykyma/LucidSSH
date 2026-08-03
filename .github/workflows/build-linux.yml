@@ -85,11 +85,3 @@ jobs:
           name: LucidSSH-zip
           path: release/*.zip
           retention-days: 7
-
-      - name: Загрузка артефактов
-        uses: actions/upload-artifact@v4
-        with:
-          name: LucidSSH-linux
-          path: |
-            release/*.pkg
-          retention-days: 7

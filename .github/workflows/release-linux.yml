@@ -25,7 +25,7 @@ jobs:
       - name: Установка системных зависимостей
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev
+          sudo apt-get install -y libsecret-1-dev libarchive-tools
 
       - name: Установка npm-пакетов
         run: npm ci
@@ -34,7 +34,7 @@ jobs:
         run: npx electron-rebuild -f -w better-sqlite3,keytar
 
       - name: Сборка приложения
-        run: npm run dist -- --linux
+        run: npm run dist -- --linux --publish never
 
       - name: Создание Release и загрузка файлов
         uses: softprops/action-gh-release@v1
