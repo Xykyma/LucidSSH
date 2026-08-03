@@ -47,7 +47,6 @@ jobs:
             release/*.tar.gz
             release/*.pkg
             release/*.apk
-            release/*.tar.gz
             release/*.zip
           generate_release_notes: true
         env:

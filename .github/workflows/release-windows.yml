@@ -33,7 +33,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Отключаем встроенную публикацию electron-builder, чтобы не конфликтовать
         # с созданием релиза через softprops/action-gh-release
-        run: npm run dist -- --win -c.publish=null
+        run: npm run dist -- --win --publish never
 
       - name: Создать Release и загрузить установщик
         uses: softprops/action-gh-release@v1
