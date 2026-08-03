@@ -33,7 +33,7 @@ jobs:
         run: npx electron-rebuild -f -w better-sqlite3,keytar
 
       - name: Сборка приложения (electron-vite + electron-builder)
-        run: npm run dist -- --linux
+        run: npm run dist -- --linux AppImage deb rpm -c.publish=null
 
       - name: Загрузка артефактов
         uses: actions/upload-artifact@v4
