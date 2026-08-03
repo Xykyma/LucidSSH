@@ -1,6 +1,7 @@
 {
   "name": "lucidssh",
   "productName": "LucidSSH",
+  "desktopName": "LucidSSH",
   "version": "1.0.0",
   "description": "LucidSSH for Windows — SSH-клиент с защитой от опасных команд и объяснением ошибок",
   "main": "out/main/index.js",

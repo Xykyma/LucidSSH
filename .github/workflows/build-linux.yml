@@ -24,7 +24,7 @@ jobs:
       - name: Установка системных зависимостей (libsecret для keytar)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev
+          sudo apt-get install -y libsecret-1-dev libarchive-tools
 
       - name: Установка npm-пакетов
         run: npm ci

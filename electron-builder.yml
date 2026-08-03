@@ -49,6 +49,7 @@ linux:
     - 7z
   category: Network
   maintainer: xyisgory@email.com
+  syncDesktopName: true
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
