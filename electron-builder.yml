@@ -38,6 +38,15 @@ linux:
   target:
     - AppImage
     - deb
+    - rpm
+    - snap
+    - pacman
+    - freebsd
+    - p5p
+    - apk
+    - tar.gz
+    - zip
+    - 7z
   category: Network
   maintainer: xyisgory@email.com
 nsis:
