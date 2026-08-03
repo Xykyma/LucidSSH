@@ -1,0 +1,56 @@
+name: Build and Release Linux
+
+on:
+  push:
+    tags:
+      - 'v*'          # запуск при пуше тега вида v1.0.0, v2.3.4 и т.д.
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: Установка Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Установка системных зависимостей
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev
+
+      - name: Установка npm-пакетов
+        run: npm ci
+
+      - name: Пересборка нативных модулей под Electron
+        run: npx electron-rebuild -f -w better-sqlite3,keytar
+
+      - name: Сборка приложения
+        run: npm run dist -- --linux
+
+      - name: Создание Release и загрузка файлов
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.snap
+            release/*.pacman
+            release/*.pkg
+            release/*.p5p
+            release/*.apk
+            release/*.tar.gz
+            release/*.zip
+            release/*.7z
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
