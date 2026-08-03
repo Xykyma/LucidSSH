@@ -42,7 +42,6 @@ linux:
     - snap
     - pacman
     - freebsd
-    - p5p
     - apk
     - tar.gz
     - zip

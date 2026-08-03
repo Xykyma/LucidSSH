@@ -44,9 +44,8 @@ jobs:
             release/*.deb
             release/*.rpm
             release/*.snap
-            release/*.pacman
+            release/*.tar.gz
             release/*.pkg
-            release/*.p5p
             release/*.apk
             release/*.tar.gz
             release/*.zip

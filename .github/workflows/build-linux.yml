@@ -33,7 +33,7 @@ jobs:
         run: npx electron-rebuild -f -w better-sqlite3,keytar
 
       - name: Сборка приложения (electron-vite + electron-builder)
-        run: npm run dist -- --linux -c.publish=never
+        run: npm run dist -- --linux
         env:
           ELECTRON_DISABLE_SANDBOX: 1
 
