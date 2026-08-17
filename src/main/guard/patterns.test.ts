@@ -58,6 +58,12 @@ describe('analyzeCommand — срабатывание (GUARD-01)', () => {
     expect(analyzeCommand('cat backup.img > /dev/nvme0n1')?.scope).toBe('disk');
   });
 
+  it('перенаправление в устройство без пробела (guard-background-ampersand: не съедается как хвостовой редирект)', () => {
+    expect(analyzeCommand('echo test >/dev/sda')?.patternId).toBe('redirect-device');
+    expect(analyzeCommand('echo test >>/dev/sda')?.patternId).toBe('redirect-device');
+    expect(analyzeCommand('echo hi >/dev/sda &')?.patternId).toBe('redirect-device');
+  });
+
   it('fork-бомба — подтверждение словом', () => {
     const m = analyzeCommand(':(){ :|:& };:');
     expect(m?.patternId).toBe('fork-bomb');
@@ -126,6 +132,42 @@ describe('analyzeCommand — цель в составной команде (GUAR
     expect(analyzeCommand(':(){ :|:& };:')?.patternId).toBe('fork-bomb');
     expect(analyzeCommand('echo hi; :(){ :|:& };:')?.patternId).toBe('fork-bomb');
     expect(analyzeCommand('sudo :(){ :|:& };:')?.patternId).toBe('fork-bomb');
+  });
+
+  it('форк-бомба распознаётся и после фонового `&` перед ней', () => {
+    // & внутри самой бомбы не должен помешать проходу по всей строке (matchWhole).
+    expect(analyzeCommand('echo hi & :(){ :|:& };:')?.patternId).toBe('fork-bomb');
+  });
+});
+
+describe('analyzeCommand — фоновый запуск через одиночный `&` (guard-background-ampersand)', () => {
+  it('цель берётся из опасного фрагмента, а не из хвоста после &', () => {
+    const m = analyzeCommand('rm -rf /var/www & echo done');
+    expect(m?.target).toBe('/var/www');
+    expect(m?.confirmationText).toBe('www');
+  });
+
+  it('фоновый запуск без второй команды (висячий &)', () => {
+    const m = analyzeCommand('rm -rf /var/www &');
+    expect(m?.target).toBe('/var/www');
+  });
+
+  it('несколько фоновых команд подряд', () => {
+    const m = analyzeCommand('dd if=/dev/zero of=/dev/sdb & disown');
+    expect(m?.target).toBe('/dev/sdb');
+  });
+
+  it('`&&` не распадается на пустой фрагмент из-за одиночного &', () => {
+    const m = analyzeCommand('rm -rf /var/www && echo done');
+    expect(m?.target).toBe('/var/www');
+    expect(m?.confirmationText).toBe('www');
+  });
+
+  it('& внутри перенаправления (2>&1, &>file, >&2) — не разделитель', () => {
+    expect(analyzeCommand('rm -rf /var/www 2>&1')?.target).toBe('/var/www');
+    expect(analyzeCommand('dd if=/dev/zero of=/dev/sdb 2>&1')?.target).toBe('/dev/sdb');
+    expect(analyzeCommand('rm -rf /var/www &>/dev/null')?.target).toBe('/var/www');
+    expect(analyzeCommand('rm -rf /var/www >&2')?.target).toBe('/var/www');
   });
 });
 
@@ -303,6 +345,10 @@ describe('analyzeAccessRisk — служба sshd', () => {
       expect(analyzeAccessRisk(cmd)).toBeNull();
     });
   }
+
+  it('распознаётся и за одиночным & (guard-background-ampersand)', () => {
+    expect(analyzeAccessRisk('systemctl stop sshd & echo ok')?.riskId).toBe('sshd-service');
+  });
 });
 
 describe('analyzeAccessRisk — общее поведение', () => {

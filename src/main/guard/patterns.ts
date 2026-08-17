@@ -41,10 +41,29 @@ interface GuardPattern {
   target: (m: RegExpMatchArray) => string | null;
 }
 
-/** Последний токен строки аргументов (цель команд вида shred/wipefs). */
+/** Хвостовое перенаправление без пробела внутри токена: `2>&1`, `>&2`, `&>file`, `&>>file`,
+ *  `>file`, `2>>file`. Требует пробела ПЕРЕД собой — не трогает слитные случаи вроде
+ *  `/var/www2>&1` (консервативно: как и с кавычками, не пытаемся разобрать всё).
+ *  Применяется только при извлечении цели (rm/shred/wipefs) — НЕ к фрагменту, который
+ *  матчат сами паттерны: `redirect-device` (`echo x >/dev/sda`) как раз ищет `>` + путь,
+ *  и снимать редирект до его проверки — значит спрятать от Стража ровно то, что он ищет. */
+const TRAILING_REDIRECT_RE = /\s+(?:\d*>{1,2}&\d+|&>{1,2}\S*|\d*>{1,2}\S+)$/;
+
+/** Снять один или несколько хвостовых редиректов подряд (`cmd > out.log 2>&1`). */
+function stripTrailingRedirects(s: string): string {
+  let result = s;
+  for (let next = result.replace(TRAILING_REDIRECT_RE, ''); next !== result; ) {
+    result = next;
+    next = result.replace(TRAILING_REDIRECT_RE, '');
+  }
+  return result;
+}
+
+/** Последний токен строки аргументов (цель команд вида shred/wipefs). Хвостовой
+ *  редирект снимается до разбиения на токены — иначе целью станет `2>&1`, а не файл. */
 function lastToken(args: string | undefined): string | null {
   if (!args) return null;
-  const tokens = args.trim().split(/\s+/);
+  const tokens = stripTrailingRedirects(args.trim()).trim().split(/\s+/);
   const last = tokens[tokens.length - 1];
   return last && !last.startsWith('-') ? last : null;
 }
@@ -66,8 +85,13 @@ const CONFIRM_WORD = 'ПОДТВЕРЖДАЮ';
 const PATTERNS: GuardPattern[] = [
   {
     // rm с рекурсивным или форсированным флагом: rm -rf X, rm -r X, rm --recursive X
+    // Хвост вида `2>&1`/`>file` после цели опционально поглощается без захвата —
+    // иначе им же и подтверждали бы удаление (см. TRAILING_REDIRECT_RE выше).
     id: 'rm-recursive',
-    re: /(?:^|\s)rm\s+(?=[^\n]*(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive))[^\n]*?\s(?!-)(\S+)\s*$/,
+    re: new RegExp(
+      String.raw`(?:^|\s)rm\s+(?=[^\n]*(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive))[^\n]*?\s(?!-)(\S+)` +
+        String.raw`(?:\s+(?:\d*>{1,2}&\d+|&>{1,2}\S*|\d*>{1,2}\S+))*\s*$`
+    ),
     scope: (m) => (m[1] === '/' || m[1] === '/*' ? 'disk' : 'directory'),
     target: (m) => m[1] ?? null
   },
@@ -219,11 +243,19 @@ export function analyzeAccessRisk(command: string): AccessRiskMatch | null {
   return null;
 }
 
-/** Разбиение составной команды на простые (; && || |) без учёта кавычек — консервативно.
+/** Разбиение составной команды на простые (; && || | &) без учёта кавычек — консервативно.
+ *  Одиночный `&` (фоновый запуск) — разделитель наравне с `;`/`&&`/`||`/`|`; `&&` матчится
+ *  раньше него в альтернативе, иначе `a && b` распалось бы на `a`, «», `b`. Лукэраунды
+ *  исключают `&`, склеенный с `>` (`2>&1`, `&>file`, `>&2`) — там `&` часть перенаправления,
+ *  не разделитель. Фрагмент отдаётся паттернам как есть, вместе с редиректом: его снятие —
+ *  забота точки извлечения цели (rm-recursive, lastToken), а не этой функции — `redirect-device`
+ *  как раз матчит `>`+путь, и снимать его здесь означало бы прятать цель от самого Стража
+ *  (см. spec .scratch/guard-background-ampersand). Кавычки по-прежнему не учитываются —
+ *  осознанное упрощение.
  *  Экспорт: переиспользуется детекцией эскалации шелла (shellIntegration.ts). */
 export function splitCompound(command: string): string[] {
   return command
-    .split(/;|&&|\|\||\|/)
+    .split(/;|&&|\|\||\||(?<!>)&(?!>)/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }

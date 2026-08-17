@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **The dangerous command guard now asks you to confirm the right object.** In a compound command whose destructive part wasn't last — `rm -rf ./node_modules && npm install` — the confirmation dialog named the tail of the whole line (`install`) instead of what was actually being deleted. The guard still blocked such commands, but the name you had to type said nothing about the danger. It now takes the object from the destructive fragment itself.
+- The same fix now also covers a background launch with a single `&` — `rm -rf /var/www & echo done` asked you to confirm `done` instead of `/var/www`. A redirect like `2>&1`, `&>file`, or `>&2` is correctly left alone; it's not treated as a separator.
 
 ## [1.0.1] — 2026-08-05
 

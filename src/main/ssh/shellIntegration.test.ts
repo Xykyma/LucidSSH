@@ -293,7 +293,8 @@ describe('isShellEscalationCommand — команды, сменяющие про
     '/bin/bash',
     'exec su -',
     'doas -s',
-    'cd /tmp && sudo -i'
+    'cd /tmp && sudo -i',
+    'long_task & sudo -i' // guard-background-ampersand: & тоже разделитель
   ])('эскалация: %s', (cmd) => {
     expect(isShellEscalationCommand(cmd)).toBe(true);
   });
@@ -308,7 +309,8 @@ describe('isShellEscalationCommand — команды, сменяющие про
     'ls -la',
     'suspend',
     'echo su',
-    'cat /etc/sudoers'
+    'cat /etc/sudoers',
+    'echo hi 2>&1' // guard-background-ampersand: редирект — не разделитель, не эскалация
   ])('не эскалация: %s', (cmd) => {
     expect(isShellEscalationCommand(cmd)).toBe(false);
   });
@@ -327,7 +329,8 @@ describe('detectInteractiveProgram (BRD-05) — запуск известной 
     ['sudo htop', 'htop'],
     ['cd /var && less log', 'less'],
     ['cd /var; htop', 'htop'],
-    ['/usr/bin/vim file', 'vim']
+    ['/usr/bin/vim file', 'vim'],
+    ['long_task & htop', 'htop'] // guard-background-ampersand: & тоже разделитель
   ] as const)('%s → %s', (cmd, expected) => {
     expect(detectInteractiveProgram(cmd)).toBe(expected);
   });
@@ -338,7 +341,8 @@ describe('detectInteractiveProgram (BRD-05) — запуск известной 
     'echo top',
     'topless', // не должно матчиться как отдельное слово 'top'
     'nginx',
-    'sudo apt update'
+    'sudo apt update',
+    'echo hi 2>&1' // guard-background-ampersand: редирект — не разделитель
   ])('не интерактивная программа: %s', (cmd) => {
     expect(detectInteractiveProgram(cmd)).toBeNull();
   });
