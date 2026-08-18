@@ -68,11 +68,14 @@ function lastToken(args: string | undefined): string | null {
   return last && !last.startsWith('-') ? last : null;
 }
 
-/** Последний сегмент пути — им подтверждают удаление («www» для /var/www). */
+/** Последний сегмент пути — им подтверждают удаление («www» для /var/www).
+ *  У корня сегмента нет: `/` подтверждается самим собой, иначе текст подтверждения
+ *  оказался бы пустым — кнопка активна при пустом поле, и самая опасная команда
+ *  набора не требует вовсе. */
 function lastSegment(path: string): string {
   const cleaned = path.replace(/["']/g, '').replace(/\/+$/, '');
   const seg = cleaned.split('/').filter(Boolean).pop();
-  return seg ?? cleaned;
+  return seg ?? (cleaned.length > 0 ? cleaned : path.replace(/["']/g, ''));
 }
 
 const CONFIRM_WORD = 'ПОДТВЕРЖДАЮ';

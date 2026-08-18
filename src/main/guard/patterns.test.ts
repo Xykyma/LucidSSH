@@ -19,8 +19,16 @@ describe('analyzeCommand — срабатывание (GUARD-01)', () => {
     expect(analyzeCommand('rm -r ./build')?.patternId).toBe('rm-recursive');
   });
 
-  it('rm -rf / — масштаб диск', () => {
-    expect(analyzeCommand('rm -rf /')?.scope).toBe('disk');
+  it('rm -rf / — масштаб диск, подтверждается непустым текстом', () => {
+    const m = analyzeCommand('rm -rf /');
+    expect(m?.scope).toBe('disk');
+    // У корня нет последнего сегмента: пустой текст подтверждения означал бы
+    // активную кнопку при пустом поле — самая опасная команда без трения.
+    expect(m?.confirmationText).toBe('/');
+  });
+
+  it('rm -rf /* — подтверждается звёздочкой, не пустой строкой', () => {
+    expect(analyzeCommand('rm -rf /*')?.confirmationText).toBe('*');
   });
 
   it('sudo не прячет команду', () => {
