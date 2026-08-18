@@ -24,8 +24,16 @@ export interface DangerousCommandPrompt {
   requestId: string;
   sessionId: string;
   command: string;
+  /** Паттерн ВЫБРАННОГО объекта — объяснение описывает именно его. */
   patternId: DangerPatternId;
-  target: string; // реальный путь/объект (GUARD-03)
+  /** Объект, имя которого нужно набрать (GUARD-03). При нескольких опасных
+   *  фрагментах выбран жребием среди самых тяжёлых — см.
+   *  .scratch/guard-multi-fragment-confirm/spec.md. */
+  target: string;
+  /** ВСЕ распознанные объекты строки — для показа: сначала совпадение по всей
+   *  строке (форк-бомба), затем по фрагментам, в порядке фрагментов. Всегда
+   *  содержит target; при одном опасном фрагменте — ровно его. */
+  targets: string[];
   scope: DangerScope;
   /** 'target' — подтверждение именем объекта, 'word' — общим словом подтверждения. */
   confirmationKind: 'target' | 'word';

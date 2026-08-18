@@ -453,18 +453,22 @@
   "guard": {
     "title": "Dangerous command",
     "targetLabel": "Affected object:",
+    "targetsLabel_one": "{{count}} affected object:",
+    "targetsLabel_other": "{{count}} affected objects:",
     "confirmWord": "CONFIRM",
     "confirmPrompt": {
       "directory": "Type the folder name to confirm:",
       "file": "Type the file name to confirm:",
       "disk": "Type the device name to confirm:",
       "other": "Type the object name to confirm:",
-      "word": "Type the word {{word}} to confirm:"
+      "word": "Type the word {{word}} to confirm:",
+      "named": "Type “{{text}}” — the name of “{{target}}”:"
     },
     "cancel": "Cancel",
     "confirmDelete": "Delete",
     "confirmRun": "Run",
     "explain": {
+      "multi": "This command has more than one destructive action: it will affect {{targets}}. Each of them is irreversible.",
       "rm-recursive": "This command deletes “{{target}}” with all its contents. This action is irreversible.",
       "dd-write": "dd will overwrite “{{target}}” — all data on it will be lost beyond recovery.",
       "mkfs": "mkfs will create a new filesystem on “{{target}}”, erasing all data on the device.",

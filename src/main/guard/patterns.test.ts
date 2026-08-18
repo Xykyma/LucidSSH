@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeAccessRisk, analyzeCommand, CONFIRM_WORD, stripCmdPrefix } from './patterns';
+import {
+  analyzeAccessRisk,
+  analyzeCommand,
+  analyzeDangers,
+  CONFIRM_WORD,
+  stripCmdPrefix
+} from './patterns';
 
 /**
  * Обязательное покрытие guard/patterns.ts (CLAUDE.md §10):
@@ -218,6 +224,75 @@ describe('analyzeCommand — отсутствие ложных срабатыв�
   it('пустая и сверхдлинная строки безопасны', () => {
     expect(analyzeCommand('')).toBeNull();
     expect(analyzeCommand('a'.repeat(20_000))).toBeNull();
+  });
+});
+
+/**
+ * Сбор ВСЕХ опасных фрагментов строки (.scratch/guard-multi-fragment-confirm).
+ * analyzeCommand — первый элемент этого списка, его поведение не меняется.
+ */
+describe('analyzeDangers — все опасные фрагменты строки', () => {
+  it('две цели в составной команде — обе в списке, в порядке фрагментов', () => {
+    const ms = analyzeDangers('rm -rf /var/www && rm -rf /etc');
+    expect(ms.map((m) => m.target)).toEqual(['/var/www', '/etc']);
+    expect(ms.every((m) => m.patternId === 'rm-recursive')).toBe(true);
+  });
+
+  it('цели из разных паттернов и через разные разделители', () => {
+    const ms = analyzeDangers('rm -rf dist; truncate -s 0 app.log & mkfs /dev/sdb1');
+    expect(ms.map((m) => [m.patternId, m.target])).toEqual([
+      ['rm-recursive', 'dist'],
+      ['truncate', 'app.log'],
+      ['mkfs', '/dev/sdb1']
+    ]);
+  });
+
+  it('оба прохода сливаются: matchWhole-паттерн и фрагментный в одной строке', () => {
+    const ms = analyzeDangers(':(){ :|:& };: ; rm -rf /var');
+    expect(ms.map((m) => m.patternId)).toEqual(['fork-bomb', 'rm-recursive']);
+    // Первый проход (по всей строке) идёт раньше — analyzeCommand видит его же.
+    expect(analyzeCommand(':(){ :|:& };: ; rm -rf /var')?.patternId).toBe('fork-bomb');
+  });
+
+  it('дубликаты схлопываются — одна цель, один элемент', () => {
+    expect(analyzeDangers('rm -rf /a && rm -rf /a').map((m) => m.target)).toEqual(['/a']);
+  });
+
+  it('одна цель разными паттернами — оба совпадения остаются (масштабы разные)', () => {
+    // Схлопывание по одной лишь цели потеряло бы disk-совпадение mkfs, и объект
+    // перестал бы быть самым тяжёлым — выбор тяжести живёт в guard/manager.ts.
+    const ms = analyzeDangers('rm -rf /dev/sdb1 && mkfs /dev/sdb1');
+    expect(ms.map((m) => [m.patternId, m.scope])).toEqual([
+      ['rm-recursive', 'directory'],
+      ['mkfs', 'disk']
+    ]);
+  });
+
+  it('fork-бомба и kill -9 1 — без цели, подтверждение словом', () => {
+    for (const cmd of [':(){ :|:& };:', 'kill -9 1']) {
+      const ms = analyzeDangers(cmd);
+      expect(ms).toHaveLength(1);
+      expect(ms[0]?.confirmationKind).toBe('word');
+      expect(ms[0]?.confirmationText).toBe(CONFIRM_WORD);
+    }
+  });
+
+  it('одна опасная часть — ровно один элемент, как у analyzeCommand', () => {
+    const ms = analyzeDangers('rm -rf ./node_modules && npm install');
+    expect(ms).toHaveLength(1);
+    expect(ms[0]).toEqual(analyzeCommand('rm -rf ./node_modules && npm install'));
+  });
+
+  it('безопасная, пустая и сверхдлинная строки — пустой список', () => {
+    expect(analyzeDangers('ls -la')).toEqual([]);
+    expect(analyzeDangers('')).toEqual([]);
+    expect(analyzeDangers('a'.repeat(20_000))).toEqual([]);
+  });
+
+  it('analyzeCommand — первый элемент списка либо null', () => {
+    for (const cmd of ['rm -rf /var/www && rm -rf /etc', 'ls -la', 'kill -9 1']) {
+      expect(analyzeCommand(cmd)).toEqual(analyzeDangers(cmd)[0] ?? null);
+    }
   });
 });
 

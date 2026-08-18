@@ -9,6 +9,11 @@ import { useBackdropClose } from '@/hooks/useBackdropClose';
  * Красный верхний border, реальная команда с целью, поле type-to-confirm.
  * Кнопка подтверждения активна только когда введённый текст точно совпадает
  * с именем объекта (или словом подтверждения, локализованным в main).
+ *
+ * Опасных фрагментов в строке может быть несколько: тогда показываются ВСЕ
+ * уничтожаемые объекты (иначе строка про один объект заявляла бы полноту,
+ * которой нет), а набрать просят один — выбранный жребием в main
+ * (.scratch/guard-multi-fragment-confirm/spec.md). Поле ввода остаётся одно.
  */
 export function DangerGuardModal({
   prompt,
@@ -19,16 +24,33 @@ export function DangerGuardModal({
   onConfirm: (text: string) => void;
   onCancel: () => void;
 }): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [value, setValue] = useState('');
 
   const isWord = prompt.confirmationKind === 'word';
+  const manyTargets = prompt.targets.length > 1;
   const promptLabel = isWord
     ? t('guard.confirmPrompt.word', { word: prompt.confirmationText })
-    : t(`guard.confirmPrompt.${prompt.scope}`);
-  const explanation = t([`guard.explain.${prompt.patternId}`, 'guard.explain.generic'], {
-    target: prompt.target
-  });
+    : manyTargets
+      ? t('guard.confirmPrompt.named', {
+          target: prompt.target,
+          text: prompt.confirmationText
+        })
+      : t(`guard.confirmPrompt.${prompt.scope}`);
+  // Объяснение про один объект при нескольких заявляло бы, что удаляется он один
+  // (решение разработчика 2026-08-18) — перечисляем все. Перечисление строит
+  // Intl.ListFormat по активному языку: разделитель и союз («и» / «and») — часть
+  // языка, а не хардкод в компоненте (CLAUDE.md §5a).
+  const explanation = manyTargets
+    ? t('guard.explain.multi', {
+        targets: new Intl.ListFormat(i18n.language, {
+          style: 'long',
+          type: 'conjunction'
+        }).format(prompt.targets)
+      })
+    : t([`guard.explain.${prompt.patternId}`, 'guard.explain.generic'], {
+        target: prompt.target
+      });
   const confirmLabel =
     prompt.patternId === 'rm-recursive' ? t('guard.confirmDelete') : t('guard.confirmRun');
   const matched = value === prompt.confirmationText;
@@ -62,8 +84,30 @@ export function DangerGuardModal({
           <p className="mt-[14px] text-[13px] leading-[1.55] text-text-body">{explanation}</p>
 
           <div className="mt-[14px] rounded-[4px] bg-bg-elevated-2 px-3 py-[9px] text-[12.5px] text-text-body">
-            <span className="text-text-muted">{t('guard.targetLabel')}</span>{' '}
-            <span className="font-mono text-text-strong">{prompt.target}</span>
+            {manyTargets ? (
+              <>
+                <span className="text-text-muted">
+                  {t('guard.targetsLabel', { count: prompt.targets.length })}
+                </span>
+                <ul className="mt-[6px] flex flex-col gap-[3px]">
+                  {prompt.targets.map((item) => (
+                    <li
+                      key={item}
+                      className={`font-mono break-all ${
+                        item === prompt.target ? 'text-text-strong' : 'text-text-body'
+                      }`}
+                    >
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <>
+                <span className="text-text-muted">{t('guard.targetLabel')}</span>{' '}
+                <span className="font-mono text-text-strong">{prompt.target}</span>
+              </>
+            )}
           </div>
 
           <div className="mt-4">

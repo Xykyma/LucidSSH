@@ -264,24 +264,49 @@ export function splitCompound(command: string): string[] {
 }
 
 /**
- * Анализ команды перед отправкой на сервер (GUARD-02).
- * Возвращает первый распознанный опасный фрагмент либо null.
+ * Анализ команды перед отправкой на сервер (GUARD-02): ВСЕ распознанные опасные
+ * фрагменты строки, в порядке «сначала проход по всей строке, затем по фрагментам».
+ * Оба прохода отрабатывают и сливаются: форк-бомба рядом с `rm -rf /var` не даёт
+ * цели для подтверждения, но показать её в списке модалки всё равно надо
+ * (.scratch/guard-multi-fragment-confirm/spec.md).
+ * Схлопываются только совпадения, одинаковые целиком (`rm -rf /a && rm -rf /a`).
+ * Одна цель, найденная РАЗНЫМИ паттернами (`rm -rf /dev/sdb1 && mkfs /dev/sdb1`),
+ * остаётся двумя совпадениями: у них разный масштаб, и схлопывание по одной лишь
+ * цели потеряло бы более тяжёлое. Показ списка и жребий схлопывают повтор цели
+ * сами — тяжесть решает guard/manager.ts, patterns.ts о ней не знает.
  */
-export function analyzeCommand(command: string): DangerMatch | null {
+export function analyzeDangers(command: string): DangerMatch[] {
   const trimmed = command.trim();
-  if (trimmed.length === 0 || trimmed.length > 10_000) return null;
+  if (trimmed.length === 0 || trimmed.length > 10_000) return [];
+
+  const matches: DangerMatch[] = [];
+  const seen = new Set<string>();
+  const add = (match: DangerMatch | null): void => {
+    if (!match) return;
+    const key = `${match.patternId} ${match.target}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    matches.push(match);
+  };
 
   // Проход 1: паттерны, разрушаемые разбиением по |/; (fork-бомба) — по всей строке.
-  const wholeMatch = matchPatterns(trimmed, WHOLE_PATTERNS);
-  if (wholeMatch) return wholeMatch;
+  add(matchPatterns(trimmed, WHOLE_PATTERNS));
 
   // Проход 2: все остальные — только по фрагментам, чтобы цель бралась из
   // опасного фрагмента, а не с конца всей строки (GUARD-03).
   for (const part of splitCompound(trimmed)) {
-    const match = matchPatterns(part, PART_PATTERNS);
-    if (match) return match;
+    add(matchPatterns(part, PART_PATTERNS));
   }
-  return null;
+  return matches;
+}
+
+/**
+ * Первый распознанный опасный фрагмент либо null. Отдельная форма сохранена
+ * намеренно: у неё есть вызывающие вне Стража (history/snippets.ts — булев
+ * признак «сниппет опасен»), а точка истины остаётся одна — analyzeDangers.
+ */
+export function analyzeCommand(command: string): DangerMatch | null {
+  return analyzeDangers(command)[0] ?? null;
 }
 
 /** sudo/env-префиксы не должны прятать команду. */

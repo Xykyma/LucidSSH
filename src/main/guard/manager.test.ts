@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DangerPatternId } from '@shared/guard';
+import type { DangerPatternId, DangerScope } from '@shared/guard';
 
 vi.mock('../ssh/sessionManager', () => ({
   getSession: vi.fn(),
@@ -9,13 +9,14 @@ vi.mock('../ssh/sessionManager', () => ({
 }));
 vi.mock('../hosts/repository', () => ({ getHost: vi.fn() }));
 vi.mock('../config/store', () => ({ loadConfig: vi.fn() }));
-vi.mock('./patterns', () => ({ analyzeCommand: vi.fn(), analyzeAccessRisk: vi.fn() }));
+vi.mock('./patterns', () => ({ analyzeDangers: vi.fn(), analyzeAccessRisk: vi.fn() }));
 vi.mock('../i18n', () => ({ t: vi.fn((key: string) => key) }));
 
 import { getSession, recordBlockedCommand, sendCommandLine, sendInput } from '../ssh/sessionManager';
 import { getHost } from '../hosts/repository';
 import { loadConfig } from '../config/store';
-import { analyzeAccessRisk, analyzeCommand } from './patterns';
+import type { DangerMatch } from './patterns';
+import { analyzeAccessRisk, analyzeDangers } from './patterns';
 import { t } from '../i18n';
 import {
   submitCommand,
@@ -30,7 +31,7 @@ const mockSendCommandLine = vi.mocked(sendCommandLine);
 const mockSendInput = vi.mocked(sendInput);
 const mockGetHost = vi.mocked(getHost);
 const mockLoadConfig = vi.mocked(loadConfig);
-const mockAnalyzeCommand = vi.mocked(analyzeCommand);
+const mockAnalyzeDangers = vi.mocked(analyzeDangers);
 const mockAnalyzeAccessRisk = vi.mocked(analyzeAccessRisk);
 const mockT = vi.mocked(t);
 
@@ -55,7 +56,7 @@ describe('submitCommand', () => {
     mockLoadConfig.mockReturnValue(fakeConfig(true));
     mockGetSession.mockReturnValue(fakeSession(1));
     mockGetHost.mockReturnValue(fakeHost(true));
-    mockAnalyzeCommand.mockReturnValue(null);
+    mockAnalyzeDangers.mockReturnValue([]);
     mockAnalyzeAccessRisk.mockReturnValue(null);
   });
 
@@ -74,13 +75,13 @@ describe('submitCommand', () => {
 
   it('Страж выключен глобально — опасная команда всё равно уходит', () => {
     mockLoadConfig.mockReturnValue(fakeConfig(false));
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitCommand('s1', 'rm -rf /var/www');
     expect(res).toEqual({ status: 'sent' });
     expect(mockSendCommandLine).toHaveBeenCalled();
@@ -88,13 +89,13 @@ describe('submitCommand', () => {
 
   it('Страж выключен для конкретного хоста — команда уходит', () => {
     mockGetHost.mockReturnValue(fakeHost(false));
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitCommand('s1', 'rm -rf /var/www');
     expect(res.status).toBe('sent');
   });
@@ -102,25 +103,25 @@ describe('submitCommand', () => {
   it('hostId=0 (Quick Connect, HM-11) — getHost(0)=null, Страж включён по умолчанию', () => {
     mockGetSession.mockReturnValue(fakeSession(0));
     mockGetHost.mockReturnValue(null);
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitCommand('s1', 'rm -rf /var/www');
     expect(res.status).toBe('blocked');
   });
 
   it('опасная команда (kind=target) блокируется, confirmationText — реальное имя объекта', () => {
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitCommand('s1', 'rm -rf /var/www');
     expect(res).toMatchObject({
       status: 'blocked',
@@ -132,16 +133,201 @@ describe('submitCommand', () => {
 
   it('опасная команда (kind=word) — confirmationText локализуется через t(), не сырое значение patterns.ts', () => {
     mockT.mockReturnValue('ПОДТВЕРЖДАЮ');
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'fork-bomb',
       target: ':(){ :|:& };:',
       scope: 'other',
       confirmationKind: 'word',
       confirmationText: 'INTERNAL_SENTINEL'
-    });
+    }]);
     const res = submitCommand('s1', ':(){ :|:& };:');
     expect(mockT).toHaveBeenCalledWith('guard.confirmWord');
     expect(res).toMatchObject({ status: 'blocked', prompt: { confirmationText: 'ПОДТВЕРЖДАЮ' } });
+  });
+});
+
+/**
+ * Составная команда с несколькими опасными фрагментами
+ * (.scratch/guard-multi-fragment-confirm/spec.md): показываем ВСЕ объекты,
+ * набрать просим ОДИН — выбранный жребием среди самых тяжёлых.
+ */
+describe('submitCommand — несколько опасных фрагментов', () => {
+  /** Совпадение с целью: подтверждается последним сегментом пути. */
+  const hit = (target: string, scope: DangerScope = 'directory'): DangerMatch => ({
+    patternId: 'rm-recursive',
+    target,
+    scope,
+    confirmationKind: 'target',
+    confirmationText: target.split('/').filter(Boolean).pop() ?? target
+  });
+  /** Совпадение без цели (форк-бомба, kill -9 1): подтверждается словом. */
+  const wordHit = (patternId: DangerPatternId, whole: string): DangerMatch => ({
+    patternId,
+    target: whole,
+    scope: 'other',
+    confirmationKind: 'word',
+    confirmationText: 'INTERNAL_SENTINEL'
+  });
+
+  function blockedPrompt(command: string): Extract<
+    ReturnType<typeof submitCommand>,
+    { status: 'blocked' }
+  >['prompt'] {
+    const res = submitCommand('s1', command);
+    if (res.status !== 'blocked') throw new Error('expected blocked');
+    return res.prompt;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLoadConfig.mockReturnValue(fakeConfig(true));
+    mockGetSession.mockReturnValue(fakeSession(1));
+    mockGetHost.mockReturnValue(fakeHost(true));
+    mockT.mockImplementation((key: string) => key);
+    mockAnalyzeAccessRisk.mockReturnValue(null);
+  });
+
+  it('в targets попадают все объекты, в порядке фрагментов', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('/var/www'), hit('/etc')]);
+    const prompt = blockedPrompt('rm -rf /var/www && rm -rf /etc');
+    expect(prompt.targets).toEqual(['/var/www', '/etc']);
+  });
+
+  it('один опасный фрагмент — ровно как раньше: тот же объект и тот же текст', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('/var/www')]);
+    const prompt = blockedPrompt('rm -rf ./node_modules && npm install');
+    expect(prompt).toMatchObject({
+      patternId: 'rm-recursive',
+      target: '/var/www',
+      targets: ['/var/www'],
+      scope: 'directory',
+      confirmationKind: 'target',
+      confirmationText: 'www'
+    });
+  });
+
+  it('есть объект класса disk — жребий только среди disk, никогда среди прочих', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('./cache'), hit('/', 'disk')]);
+    for (let i = 0; i < 40; i++) {
+      const prompt = blockedPrompt('rm -rf ./cache && rm -rf /');
+      expect(prompt.target).toBe('/');
+      expect(prompt.scope).toBe('disk');
+      expect(prompt.targets).toEqual(['./cache', '/']);
+    }
+  });
+
+  it('несколько disk — жребий среди них, остальные ступени не участвуют', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('dist'), hit('/dev/sda', 'disk'), hit('/dev/sdb', 'disk')]);
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) seen.add(blockedPrompt('cmd').target);
+    expect(seen).toEqual(new Set(['/dev/sda', '/dev/sdb']));
+  });
+
+  it('равные по тяжести объекты — за 60 прогонов встречаются оба (выбор не выучить)', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('dist'), hit('node_modules')]);
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) seen.add(blockedPrompt('rm -rf dist && rm -rf node_modules').target);
+    expect(seen).toEqual(new Set(['dist', 'node_modules']));
+  });
+
+  it('directory и file равны между собой — обе ступени в пуле', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('dist'), hit('app.log', 'file')]);
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) seen.add(blockedPrompt('rm -rf dist && truncate -s 0 app.log').target);
+    expect(seen).toEqual(new Set(['dist', 'app.log']));
+  });
+
+  it('жребий бросается один раз: подтверждается ровно показанный объект, не соседний', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('dist'), hit('node_modules')]);
+    for (let i = 0; i < 30; i++) {
+      const prompt = blockedPrompt('rm -rf dist && rm -rf node_modules');
+      const other = prompt.confirmationText === 'dist' ? 'node_modules' : 'dist';
+      expect(confirmDangerousCommand(prompt.requestId, other)).toBe(false);
+
+      const again = blockedPrompt('rm -rf dist && rm -rf node_modules');
+      expect(confirmDangerousCommand(again.requestId, again.confirmationText)).toBe(true);
+    }
+  });
+
+  it('одна цель разными паттернами — в списке один раз, в жребии по самому тяжёлому', () => {
+    // rm -rf /dev/sdb1 && mkfs /dev/sdb1 && rm -rf ./cache: у /dev/sdb1 два
+    // совпадения, тяжёлое (disk) второе. Оно и решает — просить ./cache нельзя.
+    mockAnalyzeDangers.mockReturnValue([
+      hit('/dev/sdb1'),
+      { ...hit('/dev/sdb1', 'disk'), patternId: 'mkfs' },
+      hit('./cache')
+    ]);
+    for (let i = 0; i < 40; i++) {
+      const prompt = blockedPrompt('rm -rf /dev/sdb1 && mkfs /dev/sdb1 && rm -rf ./cache');
+      expect(prompt.target).toBe('/dev/sdb1');
+      expect(prompt.patternId).toBe('mkfs');
+      expect(prompt.targets).toEqual(['/dev/sdb1', './cache']);
+    }
+  });
+
+  it('равные по тяжести дубликаты цели не перекашивают жребий', () => {
+    mockAnalyzeDangers.mockReturnValue([
+      hit('/a'),
+      { ...hit('/a'), patternId: 'shred', scope: 'file' },
+      hit('/b')
+    ]);
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) seen.add(blockedPrompt('cmd').target);
+    expect(seen).toEqual(new Set(['/a', '/b']));
+  });
+
+  it('жребий не перебрасывается: тот же requestId подтверждается показанным текстом', () => {
+    // Единственный способ убедиться, что выбор живёт в pending, а не считается
+    // заново при подтверждении: сдвинуть Math.random между показом и вводом.
+    // Пересчёт дал бы соседний объект, и правильный ввод перестал бы подходить.
+    mockAnalyzeDangers.mockReturnValue([hit('dist'), hit('node_modules')]);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const prompt = blockedPrompt('rm -rf dist && rm -rf node_modules');
+      expect(prompt.confirmationText).toBe('dist');
+      random.mockReturnValue(0.99);
+      expect(confirmDangerousCommand(prompt.requestId, prompt.confirmationText)).toBe(true);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('patternId промпта — паттерн выбранного объекта', () => {
+    mockAnalyzeDangers.mockReturnValue([
+      { ...hit('dist'), patternId: 'rm-recursive' },
+      { ...hit('/dev/sda', 'disk'), patternId: 'mkfs' }
+    ]);
+    const prompt = blockedPrompt('rm -rf dist && mkfs /dev/sdb1');
+    expect(prompt.patternId).toBe('mkfs');
+  });
+
+  it('фрагмент без цели в жребии не участвует, но в списке объектов есть', () => {
+    mockAnalyzeDangers.mockReturnValue([wordHit('fork-bomb', ':(){ :|:& };: ; rm -rf /var'), hit('/var')]);
+    for (let i = 0; i < 30; i++) {
+      const prompt = blockedPrompt(':(){ :|:& };: ; rm -rf /var');
+      expect(prompt.confirmationKind).toBe('target');
+      expect(prompt.target).toBe('/var');
+      expect(prompt.targets).toEqual([':(){ :|:& };: ; rm -rf /var', '/var']);
+    }
+  });
+
+  it('ни у одного фрагмента нет цели — подтверждение словом, как сегодня', () => {
+    mockT.mockReturnValue('ПОДТВЕРЖДАЮ');
+    mockAnalyzeDangers.mockReturnValue([
+      wordHit('fork-bomb', ':(){ :|:& };: ; kill -9 1'),
+      wordHit('kill-init', 'kill -9 1')
+    ]);
+    const prompt = blockedPrompt(':(){ :|:& };: ; kill -9 1');
+    expect(prompt.confirmationKind).toBe('word');
+    expect(prompt.confirmationText).toBe('ПОДТВЕРЖДАЮ');
+    expect(prompt.targets).toEqual([':(){ :|:& };: ; kill -9 1', 'kill -9 1']);
+  });
+
+  it('сырой путь получает тот же список объектов', () => {
+    mockAnalyzeDangers.mockReturnValue([hit('/var/www'), hit('/etc')]);
+    const res = submitRawInput('s1', 'rm -rf /var/www && rm -rf /etc');
+    if (res.status !== 'blocked') throw new Error('expected blocked');
+    expect(res.prompt.targets).toEqual(['/var/www', '/etc']);
   });
 });
 
@@ -156,7 +342,7 @@ describe('submitRawInput', () => {
     mockLoadConfig.mockReturnValue(fakeConfig(true));
     mockGetSession.mockReturnValue(fakeSession(1));
     mockGetHost.mockReturnValue(fakeHost(true));
-    mockAnalyzeCommand.mockReturnValue(null);
+    mockAnalyzeDangers.mockReturnValue([]);
     mockAnalyzeAccessRisk.mockReturnValue(null);
   });
 
@@ -164,7 +350,7 @@ describe('submitRawInput', () => {
     const res = submitRawInput('s1', 'a');
     expect(res).toEqual({ status: 'sent' });
     expect(mockSendInput).toHaveBeenCalledWith('s1', 'a');
-    expect(mockAnalyzeCommand).not.toHaveBeenCalled();
+    expect(mockAnalyzeDangers).not.toHaveBeenCalled();
   });
 
   it('длинный безопасный текст — проходит без блокировки через sendInput', () => {
@@ -175,13 +361,13 @@ describe('submitRawInput', () => {
   });
 
   it('длинный опасный текст — блокируется, ничего не отправляется на сессию', () => {
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitRawInput('s1', 'rm -rf /var/www');
     expect(res).toMatchObject({
       status: 'blocked',
@@ -200,13 +386,13 @@ describe('submitRawInput', () => {
 
   it('Страж выключен для хоста — опасный сырой текст всё равно уходит через sendInput', () => {
     mockGetHost.mockReturnValue(fakeHost(false));
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitRawInput('s1', 'rm -rf /var/www');
     expect(res.status).toBe('sent');
     expect(mockSendInput).toHaveBeenCalledWith('s1', 'rm -rf /var/www');
@@ -222,13 +408,13 @@ describe('confirmDangerousCommand', () => {
   });
 
   function block(): string {
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitCommand('s1', 'rm -rf /var/www');
     if (res.status !== 'blocked') throw new Error('expected blocked');
     return res.prompt.requestId;
@@ -262,13 +448,13 @@ describe('confirmDangerousCommand', () => {
   });
 
   function blockRaw(): string {
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitRawInput('s1', 'rm -rf /var/www');
     if (res.status !== 'blocked') throw new Error('expected blocked');
     return res.prompt.requestId;
@@ -292,13 +478,13 @@ describe('cancelDangerousCommand', () => {
   });
 
   it('известный requestId — записывает в историю как заблокированную (HIST-05)', () => {
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitCommand('s1', 'rm -rf /var/www');
     if (res.status !== 'blocked') throw new Error('expected blocked');
     cancelDangerousCommand(res.prompt.requestId);
@@ -315,13 +501,13 @@ describe('cancelDangerousCommand', () => {
   });
 
   it('отмена заблокированного сырого текста (submitRawInput) — тоже записывает в историю', () => {
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '/var/www',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: 'www'
-    });
+    }]);
     const res = submitRawInput('s1', 'rm -rf /var/www');
     if (res.status !== 'blocked') throw new Error('expected blocked');
     cancelDangerousCommand(res.prompt.requestId);
@@ -340,7 +526,7 @@ describe('GUARD-07 — риск потери SSH-доступа', () => {
     mockLoadConfig.mockReturnValue(fakeConfig(true));
     mockGetSession.mockReturnValue(fakeSession(1));
     mockGetHost.mockReturnValue(fakeHost(true));
-    mockAnalyzeCommand.mockReturnValue(null);
+    mockAnalyzeDangers.mockReturnValue([]);
     mockAnalyzeAccessRisk.mockReturnValue({ riskId: 'sshd-service' });
   });
 
@@ -354,13 +540,13 @@ describe('GUARD-07 — риск потери SSH-доступа', () => {
   });
 
   it('команда совпала с деструктивным паттерном — обычная модалка, риск не проверяется', () => {
-    mockAnalyzeCommand.mockReturnValue({
+    mockAnalyzeDangers.mockReturnValue([{
       patternId: 'rm-recursive',
       target: '~/.ssh',
       scope: 'directory',
       confirmationKind: 'target',
       confirmationText: '.ssh'
-    });
+    }]);
     const res = submitCommand('s1', 'rm -rf ~/.ssh');
     expect(res.status).toBe('blocked');
     expect(mockAnalyzeAccessRisk).not.toHaveBeenCalled();
@@ -443,7 +629,7 @@ describe('Страж целиком — patterns × manager (сквозные т
     // фиксируем поведение мока i18n явно, чтобы блок не зависел от порядка тестов.
     mockT.mockImplementation((key: string) => key);
     const actual = await vi.importActual<typeof import('./patterns')>('./patterns');
-    mockAnalyzeCommand.mockImplementation(actual.analyzeCommand);
+    mockAnalyzeDangers.mockImplementation(actual.analyzeDangers);
     mockAnalyzeAccessRisk.mockImplementation(actual.analyzeAccessRisk);
   });
 
@@ -465,7 +651,7 @@ describe('Страж целиком — patterns × manager (сквозные т
     }
   });
 
-  it('инвариант 2 — опасность (analyzeCommand) проверяется раньше риска доступа (GUARD-07)', () => {
+  it('инвариант 2 — опасность (analyzeDangers) проверяется раньше риска доступа (GUARD-07)', () => {
     // Составная команда: обе половины разбираются обеими функциями настоящей
     // реализации (splitCompound). Цель берётся из опасного фрагмента, а не с
     // конца всей строки — иначе подтверждать пришлось бы «sshd».
