@@ -504,7 +504,6 @@ interface LucidSSHBridge {
   onError(cb: (sessionId: string, explanation: ErrorExplanation) => void): () => void;
   onDashboard(cb: (sessionId: string, metrics: DashboardMetrics) => void): () => void;
   onBreadcrumb(cb: (sessionId: string, crumb: Breadcrumb) => void): () => void;
-  onNotification(cb: (event: AppNotification) => void): () => void; // NOTIF-03: fingerprint + update
 }
 ```
 
@@ -568,6 +567,20 @@ type SubmitResult =
   | { status: 'sent' }
   | { status: 'blocked'; prompt: DangerousCommandPrompt }
   | { status: 'access-risk'; prompt: AccessRiskPrompt };
+
+// The header events feed (NOTIF-03) is assembled in the renderer and never crosses
+// IPC: there is no notification channel. Held in memory by stores/events.tsx (these
+// are active alerts, not history) and fed by three signals that already exist —
+// onHostKeyPrompt with isChanged (fingerprint), onUpdateStatus with state
+// 'available' (update), and the renderer's own shell-state signal (guardUncertain,
+// TERM-10 fail-safe).
+interface AppEvent {
+  id: string;
+  type: 'fingerprint' | 'update' | 'guardUncertain';
+  hostName?: string;           // fingerprint, guardUncertain
+  version?: string;            // update
+  createdAt: number;
+}
 
 interface DashboardMetrics {
   cpuPercent: number | null;   // null → "—" (DASH-05)
