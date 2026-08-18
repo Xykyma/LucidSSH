@@ -449,9 +449,16 @@ interface LucidSSHBridge {
   // --- Sessions ---
   connectHost(hostId: number): Promise<{ sessionId: string; status: SessionStatus }>;
   disconnectSession(sessionId: string): Promise<void>;
-  sendTerminalInput(sessionId: string, text: string): Promise<void>;
   confirmHostKey(requestId: string, decision: 'accept' | 'reject'): Promise<void>;
+
+  // --- Guard (a command reaches the server only through this check, ADR-0008) ---
+  // Both entry points return SubmitResult: 'sent' — it went out; 'blocked' — the
+  // type-to-confirm dialog (GUARD-02); 'access-risk' — the advisory dialog (GUARD-07).
+  // The prompt comes back as the reply to the call itself; there is no separate event.
+  submitCommand(sessionId: string, command: string): Promise<SubmitResult>;   // Enter-submitted input
+  sendTerminalInput(sessionId: string, text: string): Promise<SubmitResult>;  // raw text (paste)
   confirmDangerousCommand(requestId: string, confirmationText: string): Promise<{ allowed: boolean }>;
+  cancelDangerousCommand(requestId: string): void;       // cancel: the pending record is dropped in main
 
   // --- Catalog / errors (read-only access to the built-in databases) ---
   getCommandCatalog(): Promise<CommandsDatabase>;
@@ -490,14 +497,14 @@ interface LucidSSHBridge {
   applyUpdate(): Promise<void>;                           // after confirmation
 
   // --- Events (main → renderer) ---
-  onTerminalData(cb: (sessionId: string, data: string) => void): void;
-  onSessionStatus(cb: (sessionId: string, status: SessionStatus) => void): void;
-  onHostKeyPrompt(cb: (req: HostKeyPrompt) => void): void;
-  onDangerousCommand(cb: (req: DangerousCommandPrompt) => void): void;
-  onError(cb: (sessionId: string, explanation: ErrorExplanation) => void): void;
-  onDashboard(cb: (sessionId: string, metrics: DashboardMetrics) => void): void;
-  onBreadcrumb(cb: (sessionId: string, crumb: Breadcrumb) => void): void;
-  onNotification(cb: (event: AppNotification) => void): void; // NOTIF-03: fingerprint + update
+  // Every subscription returns its own unsubscribe function (called on unmount).
+  onTerminalData(cb: (sessionId: string, data: string) => void): () => void;
+  onSessionStatus(cb: (sessionId: string, status: SessionStatus) => void): () => void;
+  onHostKeyPrompt(cb: (req: HostKeyPrompt) => void): () => void;
+  onError(cb: (sessionId: string, explanation: ErrorExplanation) => void): () => void;
+  onDashboard(cb: (sessionId: string, metrics: DashboardMetrics) => void): () => void;
+  onBreadcrumb(cb: (sessionId: string, crumb: Breadcrumb) => void): () => void;
+  onNotification(cb: (event: AppNotification) => void): () => void; // NOTIF-03: fingerprint + update
 }
 ```
 
@@ -514,14 +521,53 @@ interface HostKeyPrompt {
   previousFingerprint?: string;
 }
 
+type DangerScope = 'file' | 'directory' | 'disk' | 'other';
+
+// Id of a dangerous pattern (guard/patterns.ts, GUARD-01) — the i18n key of its
+// explanation (guard.explain.<id>) and what the renderer compares against. The
+// union is closed: a new pattern that is not listed here fails to compile.
+type DangerPatternId =
+  | 'rm-recursive' | 'dd-write' | 'mkfs' | 'chmod-777' | 'truncate'
+  | 'redirect-device' | 'shred' | 'wipefs' | 'fork-bomb'
+  | 'drop-database' | 'kill-init';
+
 interface DangerousCommandPrompt {
   requestId: string;
   sessionId: string;
   command: string;
-  target: string;              // the real path/object (GUARD-03)
-  scope: 'file' | 'directory' | 'disk' | 'other';
-  explanation: string;
+  patternId: DangerPatternId;  // pattern of the CHOSEN object — the explanation describes that one
+  // The object whose name must be typed (GUARD-03). When a compound command has
+  // several dangerous fragments, it is drawn at random among the heaviest ones
+  // ('disk' outranks everything, the rest are level); the draw happens once in
+  // main and is not re-rolled when the user retypes after a typo.
+  target: string;
+  // ALL recognized objects of the command — for display only: the whole-string
+  // match first (fork bomb), then per-fragment matches in fragment order. Always
+  // contains target; with a single dangerous fragment it is exactly that one.
+  targets: string[];
+  scope: DangerScope;          // scope of the CHOSEN object
+  confirmationKind: 'target' | 'word'; // by the object's name, or by a generic confirmation word
+  confirmationText: string;    // what exactly to type, already localized; compared in main
 }
+
+// Category of the risk of losing SSH access (GUARD-07).
+type AccessRiskId = 'sshd-config' | 'firewall' | 'passwd' | 'sshd-service';
+
+// Warning about the risk of losing SSH access (GUARD-07): advisory, not a block —
+// a two-button dialog with no type-to-confirm. Only checked when no dangerous
+// pattern matched the command.
+interface AccessRiskPrompt {
+  requestId: string;
+  sessionId: string;
+  command: string;
+  riskId: AccessRiskId;        // the text comes from i18n keyed by riskId, it is not sent as a string
+}
+
+// Result of submitting a command through the guard (submitCommand / sendTerminalInput).
+type SubmitResult =
+  | { status: 'sent' }
+  | { status: 'blocked'; prompt: DangerousCommandPrompt }
+  | { status: 'access-risk'; prompt: AccessRiskPrompt };
 
 interface DashboardMetrics {
   cpuPercent: number | null;   // null → "—" (DASH-05)
