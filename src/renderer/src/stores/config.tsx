@@ -1,6 +1,6 @@
 import type { JSX, ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type { AppConfig, UpdateHotkeyResult } from '@shared/config';
+import type { Settings, UpdateHotkeyResult } from '@shared/config';
 import type { HotkeyAction } from '@shared/hotkeys';
 
 /**
@@ -9,13 +9,13 @@ import type { HotkeyAction } from '@shared/hotkeys';
  * читает актуальные настройки терминала синхронно.
  */
 
-let currentConfig: AppConfig | null = null;
-export function getCurrentConfig(): AppConfig | null {
+let currentConfig: Settings | null = null;
+export function getCurrentConfig(): Settings | null {
   return currentConfig;
 }
 
 interface ConfigStore {
-  config: AppConfig | null;
+  config: Settings | null;
   update: (path: string, value: string | number | boolean) => Promise<void>;
   /** SET-10: перепривязка хоткея с проверкой конфликтов (issue #1). При
    *  конфликте состояние стора не меняется — возвращает, кто уже владеет
@@ -33,7 +33,7 @@ interface ConfigStore {
 const Ctx = createContext<ConfigStore | null>(null);
 
 export function ConfigProvider({ children }: { children: ReactNode }): JSX.Element {
-  const [config, setConfig] = useState<AppConfig | null>(currentConfig);
+  const [config, setConfig] = useState<Settings | null>(currentConfig);
 
   useEffect(() => {
     void window.lucidSSH.getConfig().then((c) => {

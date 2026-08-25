@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { IPC } from '@shared/ipc';
-import type { AppConfig, UpdateHotkeyResult } from '@shared/config';
+import { projectSettings, type Settings, type UpdateHotkeyResult } from '@shared/config';
 import { DASHBOARD_ALERT_ISSUES, type DashboardAlertIssue } from '@shared/dashboard';
 import { INTERACTIVE_PROGRAMS } from '@shared/interactivePrograms';
 import {
@@ -22,11 +22,11 @@ import { assertSenderIsMainWindow, assertString, IpcValidationError } from './va
 
 type Primitive = string | number | boolean;
 
-/** Плоские пути настроек, которые renderer вправе менять. */
-const WRITABLE: Record<string, (v: unknown, cfg: AppConfig) => void> = {
-  'language': (v, cfg) => {
-    if (typeof v === 'string') cfg.language = v;
-  },
+/** Плоские пути настроек, которые renderer вправе менять. Принимает `Settings`,
+ *  не `AppConfig` (ADR-0014): путь `language` отсюда вычеркнут, а не запрещён
+ *  отдельной проверкой — попытка написать здесь `cfg.language = v` не пройдёт
+ *  компиляцию, потому что `Settings` этого поля не объявляет. */
+const WRITABLE: Record<string, (v: unknown, cfg: Settings) => void> = {
   'ui.expertMode': (v, cfg) => setBool(v, (b) => (cfg.ui.expertMode = b)),
   'ui.hints.commandCatalog': (v, cfg) => setBool(v, (b) => (cfg.ui.hints.commandCatalog = b)),
   'ui.hints.outputTooltips': (v, cfg) => setBool(v, (b) => (cfg.ui.hints.outputTooltips = b)),
@@ -73,18 +73,18 @@ function setNum(v: unknown, min: number, max: number, apply: (n: number) => void
 }
 
 export function registerConfigIpcHandlers(): void {
-  ipcMain.handle(IPC.configGet, (event): AppConfig => {
+  ipcMain.handle(IPC.configGet, (event): Settings => {
     assertSenderIsMainWindow(event);
-    return loadConfig();
+    return projectSettings(loadConfig());
   });
 
-  ipcMain.handle(IPC.configUpdate, (event, rawPath: unknown, value: unknown): AppConfig => {
+  ipcMain.handle(IPC.configUpdate, (event, rawPath: unknown, value: unknown): Settings => {
     assertSenderIsMainWindow(event);
     if (typeof rawPath !== 'string' || !(rawPath in WRITABLE)) {
       throw new IpcValidationError('path: unknown setting');
     }
     const setter = WRITABLE[rawPath]!;
-    return updateConfig((cfg) => setter(value as Primitive, cfg));
+    return projectSettings(updateConfig((cfg) => setter(value as Primitive, cfg)));
   });
 
   // SET-10 (issue #1): перепривязка редактируемого хоткея — с проверкой
@@ -106,47 +106,56 @@ export function registerConfigIpcHandlers(): void {
       const action = rawAction as HotkeyAction;
       const cfg = loadConfig();
       const conflictWith = findHotkeyConflict(combo, cfg.hotkeys, action) ?? undefined;
-      if (conflictWith) return { ok: false, config: cfg, conflictWith };
+      if (conflictWith) return { ok: false, config: projectSettings(cfg), conflictWith };
       const next = updateConfig((c) => {
         c.hotkeys[action] = combo;
       });
-      return { ok: true, config: next };
+      return { ok: true, config: projectSettings(next) };
     }
   );
 
   // «Сбросить хоткеи к заводским» — точечный сброс только карты хоткеев
   // (в отличие от configReset/SET-08, который сбрасывает вообще все настройки).
-  ipcMain.handle(IPC.configResetHotkeys, (event): AppConfig => {
+  ipcMain.handle(IPC.configResetHotkeys, (event): Settings => {
     assertSenderIsMainWindow(event);
-    return updateConfig((cfg) => {
-      cfg.hotkeys = { ...DEFAULT_HOTKEYS };
-    });
+    return projectSettings(
+      updateConfig((cfg) => {
+        cfg.hotkeys = { ...DEFAULT_HOTKEYS };
+      })
+    );
   });
 
   // Счётчик показов одноразовых подсказок (§5.1, SNIP-08). Только известные id.
-  ipcMain.handle(IPC.configMarkHint, (event, rawId: unknown): AppConfig => {
+  ipcMain.handle(IPC.configMarkHint, (event, rawId: unknown): Settings => {
     assertSenderIsMainWindow(event);
     if (!KNOWN_HINTS.has(rawId as string)) throw new IpcValidationError('hintId: unknown');
     const id = rawId as string;
-    return updateConfig((cfg) => {
-      cfg.shownCounts[id] = (cfg.shownCounts[id] ?? 0) + 1;
-    });
+    return projectSettings(
+      updateConfig((cfg) => {
+        cfg.shownCounts[id] = (cfg.shownCounts[id] ?? 0) + 1;
+      })
+    );
   });
 
   // «Сбросить счётчик показов подсказок» (Настройки → Интерфейс) — обнуляет
   // все известные счётчики, подсказки снова показываются до своего лимита.
-  ipcMain.handle(IPC.configResetHints, (event): AppConfig => {
+  ipcMain.handle(IPC.configResetHints, (event): Settings => {
     assertSenderIsMainWindow(event);
-    return updateConfig((cfg) => {
-      for (const id of KNOWN_HINTS) cfg.shownCounts[id] = 0;
-    });
+    return projectSettings(
+      updateConfig((cfg) => {
+        for (const id of KNOWN_HINTS) cfg.shownCounts[id] = 0;
+      })
+    );
   });
 
   // DASH-09: «Больше не показывать» для конкретной находки на конкретном хосте —
   // health-баннер main-процесса сверяется с этим списком перед отправкой (dashboard.ts).
+  // Возвращает void, не Settings/AppConfig: dismissedAlerts — Внутреннее
+  // состояние, renderer его не видит, а Promise<AppConfig> раньше приглашал
+  // считать, что зеркало освежилось (ADR-0014).
   ipcMain.handle(
     IPC.configDismissDashboardAlert,
-    (event, rawHostId: unknown, rawIssue: unknown): AppConfig => {
+    (event, rawHostId: unknown, rawIssue: unknown): void => {
       assertSenderIsMainWindow(event);
       if (typeof rawHostId !== 'number' || !Number.isInteger(rawHostId)) {
         throw new IpcValidationError('hostId: integer expected');
@@ -155,7 +164,7 @@ export function registerConfigIpcHandlers(): void {
         throw new IpcValidationError('issue: unknown');
       }
       const issue = rawIssue as DashboardAlertIssue;
-      return updateConfig((cfg) => {
+      updateConfig((cfg) => {
         const list = cfg.dashboard.dismissedAlerts[rawHostId] ?? [];
         if (!list.includes(issue)) cfg.dashboard.dismissedAlerts[rawHostId] = [...list, issue];
       });

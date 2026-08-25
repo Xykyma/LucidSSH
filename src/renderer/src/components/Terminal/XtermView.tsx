@@ -5,7 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
-import type { AppConfig } from '@shared/config';
+import type { Settings } from '@shared/config';
 import type { AuthPromptRequest } from '@shared/ssh';
 import type { AccessRiskPrompt, DangerousCommandPrompt } from '@shared/guard';
 import { getCurrentConfig } from '@/stores/config';
@@ -393,7 +393,7 @@ export function getSearchAddon(sessionId: string): SearchAddon | undefined {
  * Применить настройки терминала ко всем живым сессиям без перезапуска (SET-02).
  * Меняем шрифт/размер/bold прямо в options и рефитим.
  */
-export function applyTerminalConfig(cfg: AppConfig): void {
+export function applyTerminalConfig(cfg: Settings): void {
   const fontFamily = `'${cfg.terminal.font}', 'Cascadia Mono', Consolas, monospace`;
   for (const c of cache.values()) {
     c.term.options.fontFamily = fontFamily;

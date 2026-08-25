@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **"Reset settings to defaults" no longer loses SSH keys pending deployment to the server, or changes the interface language.** Both used to be wiped as a side effect of the reset, alongside the actual settings — a key generated in step 4 of the SSH key wizard but not yet copied to the server would silently disappear, so the next connection attempt used a key the server didn't recognize.
 - **Esc no longer leaks into the remote session while also closing a panel.** Previously the key reached xterm's own handling before the panel's listener ran (no `preventDefault`), so it did both: the control byte was sent to the server *and* the panel closed. Now Esc belongs to the open panel until it's closed.
 - **Esc while editing a history note no longer closes the whole History drawer.** The note input and the drawer each listened for Esc independently; cancelling the note also closed the drawer underneath it.
 - The SSH key wizard's Esc handling no longer depends on a hand-rolled `capture`/`stopPropagation` trick to avoid closing the connection form behind it — the shared stack orders it correctly by construction.

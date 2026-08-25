@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AppConfig } from '@shared/config';
+import type { Settings } from '@shared/config';
 import type { KnownHostView } from '@shared/ssh';
 import type { ImportPreview } from '@shared/hosts';
 import { ImportDialog } from '@/components/HostManager/ImportDialog';
@@ -219,7 +219,7 @@ function TerminalSection({
   update,
   updateTerminal
 }: {
-  config: AppConfig;
+  config: Settings;
   update: UpdateFn;
   updateTerminal: UpdateFn;
 }): JSX.Element {
@@ -301,7 +301,7 @@ function TerminalSection({
   );
 }
 
-function ConnectionSection({ config, update }: { config: AppConfig; update: UpdateFn }): JSX.Element {
+function ConnectionSection({ config, update }: { config: Settings; update: UpdateFn }): JSX.Element {
   const { t } = useTranslation();
   return (
     <>
@@ -383,7 +383,7 @@ function NumberCard({
   );
 }
 
-function SecuritySection({ config, update }: { config: AppConfig; update: UpdateFn }): JSX.Element {
+function SecuritySection({ config, update }: { config: Settings; update: UpdateFn }): JSX.Element {
   const { t } = useTranslation();
   const [hosts, setHosts] = useState<KnownHostView[]>([]);
   const refresh = useCallback(() => void window.lucidSSH.listKnownHosts().then(setHosts), []);
@@ -553,7 +553,7 @@ function LanguageCard(): JSX.Element {
   );
 }
 
-function InterfaceSection({ config, update }: { config: AppConfig; update: UpdateFn }): JSX.Element {
+function InterfaceSection({ config, update }: { config: Settings; update: UpdateFn }): JSX.Element {
   const { t } = useTranslation();
   const { resetHints } = useConfig();
   const h = config.ui.hints;

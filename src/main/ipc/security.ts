@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { ipcMain } from 'electron';
 import { IPC } from '@shared/ipc';
-import type { AppConfig } from '@shared/config';
+import { projectSettings, type Settings } from '@shared/config';
 import type { KnownHostView } from '@shared/ssh';
 import { listKnownHosts, parseHostToken, removeKnownHostLine, sha256Fingerprint } from '../ssh/knownHosts';
 import { findHostByAddressPort } from '../hosts/repository';
@@ -39,8 +39,8 @@ export function registerSecurityIpcHandlers(): void {
     removeKnownHostLine(rawLine);
   });
 
-  ipcMain.handle(IPC.configReset, (event): AppConfig => {
+  ipcMain.handle(IPC.configReset, (event): Settings => {
     assertSenderIsMainWindow(event);
-    return resetConfig();
+    return projectSettings(resetConfig());
   });
 }
