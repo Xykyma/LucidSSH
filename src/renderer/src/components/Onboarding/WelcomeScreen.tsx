@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '@/components/common/Icon';
 import { LogoMark } from '@/components/common/LogoMark';
 import { ExternalImportDialog } from '@/components/HostManager/ExternalImportDialog';
+import { useAppVersion } from '@/hooks/useAppVersion';
 
 /**
  * Экран первого запуска (OB-01…OB-02; скриншот 14-Firstrun):
@@ -19,12 +20,11 @@ export function WelcomeScreen({
 }): JSX.Element {
   const { t } = useTranslation();
   const [puttyCount, setPuttyCount] = useState(0);
-  const [version, setVersion] = useState('');
+  const version = useAppVersion();
   const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     void window.lucidSSH.puttySessionsCount().then(setPuttyCount);
-    void window.lucidSSH.getAppInfo().then((i) => setVersion(i.version));
   }, []);
 
   return (

@@ -28,7 +28,7 @@ import type { ExternalImportApplyResult, ExternalImportResult, ImportedHost } fr
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getMainWindow } from '../window/mainWindow';
-import { loadConfig, updateConfig } from '../config/store';
+import { updateConfig } from '../config/store';
 import { assertSenderIsMainWindow, IpcValidationError } from './validate';
 import { t } from '../i18n';
 
@@ -366,19 +366,6 @@ export function registerHostIpcHandlers(): void {
     assertSenderIsMainWindow(event);
     return countPuttySessions();
   });
-
-  ipcMain.handle(IPC.onboardingComplete, (event): void => {
-    assertSenderIsMainWindow(event);
-    updateConfig((cfg) => {
-      cfg.onboarding.completed = true;
-    });
-  });
-
-  ipcMain.handle(IPC.onboardingStatus, (event): boolean => {
-    assertSenderIsMainWindow(event);
-    // completed вычисляется лениво: конфиг + наличие хостов (OB-01)
-    return loadOnboardingCompleted();
-  });
 }
 
 /** Валидация запроса генерации ключа (HM-12): поля формы хоста могут быть
@@ -404,10 +391,6 @@ function validateKeygenRequest(raw: unknown): KeygenGenerateRequest {
     port,
     username: str(r['username'], 'username', 64)
   };
-}
-
-function loadOnboardingCompleted(): boolean {
-  return loadConfig().onboarding.completed || repo.listHosts().length > 0;
 }
 
 /**

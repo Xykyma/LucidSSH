@@ -97,18 +97,16 @@ describe('saveConfig / updateConfig', () => {
 });
 
 describe('resetConfig (SET-08)', () => {
-  it('сбрасывает настройки, но сохраняет геометрию окна и онбординг', async () => {
+  it('сбрасывает настройки, но сохраняет геометрию окна', async () => {
     const { loadConfig, updateConfig, resetConfig } = await freshStore();
     loadConfig();
     updateConfig((cfg) => {
       cfg.language = 'en';
       cfg.window = { width: 999, height: 555, maximized: true };
-      cfg.onboarding = { completed: true };
     });
     const fresh = resetConfig();
     expect(fresh.language).toBe('ru'); // обычная настройка сброшена
     expect(fresh.window).toEqual({ width: 999, height: 555, maximized: true });
-    expect(fresh.onboarding).toEqual({ completed: true });
   });
 
   it('восстанавливает заводскую карту хоткеев (SET-10) — не трогает хосты/ключи/историю', async () => {

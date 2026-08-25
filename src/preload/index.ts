@@ -250,8 +250,6 @@ const api = {
 
   // --- Onboarding (OB-01…03) ---
   puttySessionsCount: (): Promise<number> => ipcRenderer.invoke(IPC.puttySessionsCount),
-  onboardingComplete: (): Promise<void> => ipcRenderer.invoke(IPC.onboardingComplete),
-  onboardingStatus: (): Promise<boolean> => ipcRenderer.invoke(IPC.onboardingStatus),
 
   // --- Окно (кастомный тайтл-бар) ---
   windowMinimize: (): void => ipcRenderer.send(IPC.windowMinimize),
