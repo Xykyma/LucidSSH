@@ -5,6 +5,11 @@ import type { FixedHotkeyAction, HotkeyAction } from './hotkeys';
 /**
  * Формат %APPDATA%\LucidSSH\config.json (Data_Structures.md §6).
  * Секретов здесь нет и быть не может (SEC-01).
+ *
+ * Разрез по тому, кто инициирует запись (ADR-0014): `Settings` пишет окно
+ * (обе стороны читают), `AppState` пишет main, окно его не видит. Формат
+ * config.json не меняется — `AppConfig` остаётся пересечением обеих половин,
+ * это только линия отдачи в renderer (`projectSettings`).
  */
 
 export interface WindowState {
@@ -15,11 +20,8 @@ export interface WindowState {
   maximized: boolean; // WIN-01
 }
 
-export interface AppConfig {
-  version: string;
-  /** Язык интерфейса (CLAUDE.md §5a): дефолт 'ru', fallback 'en'. */
-  language: string;
-  window: WindowState;
+/** Пишет окно, читают обе стороны. Это отдаётся в renderer целиком. */
+export interface Settings {
   ui: {
     expertMode: boolean; // SET-05
     hints: {
@@ -60,20 +62,83 @@ export interface AppConfig {
   hotkeys: Record<HotkeyAction, string>;
   history: {
     enabled: boolean; // HIST-07
-    perHostDisabled: number[];
-  };
-  dashboard: {
-    /** DASH-09: «Больше не показывать» — issue не всплывает в health-баннере
-     *  для этого хоста впредь (id хоста → список отклонённых находок). */
-    dismissedAlerts: Record<number, DashboardAlertIssue[]>;
   };
   /** id подсказки → сколько раз показана (лимит 3, §5.1 ТЗ). */
   shownCounts: Record<string, number>;
-  /** HM-12: ключи мастера, ждущие дозаписи на сервер — переживает перезапуск. */
-  pendingKeyDeployments: PendingKeyDeployment[];
   updates: {
     autoCheck: boolean; // OQ-09
+  };
+}
+
+/** Пишет main, окно не видит — `projectSettings` вычёркивает это при отдаче в IPC. */
+export interface AppState {
+  version: string;
+  /** Язык интерфейса (CLAUDE.md §5a): дефолт 'ru', fallback 'en'. Пишется
+   *  только через changeMainLanguage() (i18n:set-language) — путь `language`
+   *  в `WRITABLE` (config:update) отсутствует намеренно, не по недосмотру. */
+  language: string;
+  window: WindowState;
+  /** HM-12: ключи мастера, ждущие дозаписи на сервер — переживает перезапуск. */
+  pendingKeyDeployments: PendingKeyDeployment[];
+  dashboard: {
+    /** DASH-09: «Больше не показывать» — issue не всплывает в health-баннере
+     *  для этого хоста впредь (id хоста → список отклонённых находок). Пишут
+     *  обе стороны (окно жмёт «не показывать», main сам снимает mute при
+     *  self-clearing), но владелец — main. */
+    dismissedAlerts: Record<number, DashboardAlertIssue[]>;
+  };
+  history: {
+    perHostDisabled: number[];
+  };
+  updates: {
     source: string;
+  };
+}
+
+/** Форма файла на диске — этим разрезом не меняется. */
+export type AppConfig = Settings & AppState;
+
+/**
+ * Проекция для renderer — явный литерал, не спред: забытое поле `Settings`
+ * ловит компилятор (возвращаемый тип не удовлетворён), утечку `AppState`
+ * ловит то, что литерал явный, а не `Omit`/спред.
+ */
+export function projectSettings(cfg: AppConfig): Settings {
+  return {
+    ui: cfg.ui,
+    terminal: cfg.terminal,
+    connection: cfg.connection,
+    guard: cfg.guard,
+    hotkeys: cfg.hotkeys,
+    history: { enabled: cfg.history.enabled },
+    shownCounts: cfg.shownCounts,
+    updates: { autoCheck: cfg.updates.autoCheck }
+  };
+}
+
+/** Обратная проекция — нужна только SET-08 (resetConfig): то, что должно
+ *  пережить сброс настроек, потому что владеет им main, а не окно. */
+export function projectState(cfg: AppConfig): AppState {
+  return {
+    version: cfg.version,
+    language: cfg.language,
+    window: cfg.window,
+    pendingKeyDeployments: cfg.pendingKeyDeployments,
+    dashboard: cfg.dashboard,
+    history: { perHostDisabled: cfg.history.perHostDisabled },
+    updates: { source: cfg.updates.source }
+  };
+}
+
+/** Собирает файл на диске обратно из двух половин (SET-08). `history` и
+ *  `updates` разрезаны вложенно — наивный спред одной половины поверх другой
+ *  стёр бы соседнее поле того же вложенного объекта. */
+export function combineConfig(settings: Settings, state: AppState): AppConfig {
+  return {
+    ...settings,
+    ...state,
+    history: { ...settings.history, ...state.history },
+    updates: { ...settings.updates, ...state.updates }
   };
 }
 
@@ -81,6 +146,6 @@ export interface AppConfig {
  *  конфликте `config` возвращается неизменным — записи не было (SET-10). */
 export interface UpdateHotkeyResult {
   ok: boolean;
-  config: AppConfig;
+  config: Settings;
   conflictWith?: HotkeyAction | FixedHotkeyAction;
 }

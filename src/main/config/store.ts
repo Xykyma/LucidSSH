@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AppConfig } from '@shared/config';
+import { combineConfig, projectState, type AppConfig } from '@shared/config';
 import { createDefaultConfig } from './defaults';
 import { mergeWithDefaults } from './merge';
 
@@ -56,15 +56,18 @@ export function updateConfig(mutator: (cfg: AppConfig) => void): AppConfig {
 }
 
 /**
- * Сброс настроек до заводских (SET-08). НЕ трогает хосты, ключи и историю —
- * они в отдельных хранилищах. Геометрия окна сохраняется, чтобы сброс не был
- * резким (это не «настройка» в смысле SET).
+ * Сброс настроек до заводских (SET-08). Правило, а не список исключений:
+ * `Settings` заменяется дефолтной, `AppState` (window, язык, ожидающие
+ * дозаписи ключей, dismissedAlerts дашборда…) переносится из прежнего
+ * конфига целиком — этим полям не принадлежит фабричный сброс, ими владеет
+ * main, а не пользовательская настройка. НЕ трогает хосты, ключи и историю
+ * в БД — они в отдельных хранилищах.
  */
 export function resetConfig(): AppConfig {
   const prev = loadConfig();
   const fresh = createDefaultConfig(app.getVersion());
-  fresh.window = prev.window;
-  cached = fresh;
+  const next = combineConfig(fresh, projectState(prev));
+  cached = next;
   saveConfig();
-  return fresh;
+  return next;
 }

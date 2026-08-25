@@ -97,15 +97,15 @@ describe('saveConfig / updateConfig', () => {
 });
 
 describe('resetConfig (SET-08)', () => {
-  it('сбрасывает настройки, но сохраняет геометрию окна', async () => {
+  it('сбрасывает настройки, но сохраняет геометрию окна и язык интерфейса (ADR-0014)', async () => {
     const { loadConfig, updateConfig, resetConfig } = await freshStore();
     loadConfig();
     updateConfig((cfg) => {
-      cfg.language = 'en';
+      cfg.language = 'en'; // Внутреннее состояние — сброс его не трогает
       cfg.window = { width: 999, height: 555, maximized: true };
     });
     const fresh = resetConfig();
-    expect(fresh.language).toBe('ru'); // обычная настройка сброшена
+    expect(fresh.language).toBe('en');
     expect(fresh.window).toEqual({ width: 999, height: 555, maximized: true });
   });
 
@@ -118,5 +118,52 @@ describe('resetConfig (SET-08)', () => {
     });
     const fresh = resetConfig();
     expect(fresh.hotkeys).toEqual(DEFAULT_HOTKEYS);
+  });
+
+  it('не теряет pendingKeyDeployments, geometрию окна и dismissedAlerts дашборда (ADR-0014)', async () => {
+    const { loadConfig, updateConfig, resetConfig } = await freshStore();
+    loadConfig();
+    updateConfig((cfg) => {
+      cfg.pendingKeyDeployments = [
+        { keyPath: 'C:\\Users\\u\\.ssh\\id_ed25519_web', publicKey: 'ssh-ed25519 AAAA' }
+      ];
+      cfg.window = { width: 999, height: 555, maximized: true };
+      cfg.dashboard.dismissedAlerts[3] = ['cpu'];
+    });
+    const fresh = resetConfig();
+    expect(fresh.pendingKeyDeployments).toEqual([
+      { keyPath: 'C:\\Users\\u\\.ssh\\id_ed25519_web', publicKey: 'ssh-ed25519 AAAA' }
+    ]);
+    expect(fresh.window).toEqual({ width: 999, height: 555, maximized: true });
+    expect(fresh.dashboard.dismissedAlerts).toEqual({ 3: ['cpu'] });
+  });
+
+  it('возвращает Настройки к дефолтам', async () => {
+    const { loadConfig, updateConfig, resetConfig } = await freshStore();
+    loadConfig();
+    updateConfig((cfg) => {
+      cfg.ui.expertMode = true;
+      cfg.terminal.fontSize = 20;
+      cfg.history.enabled = false;
+      cfg.updates.autoCheck = false;
+    });
+    const fresh = resetConfig();
+    expect(fresh.ui.expertMode).toBe(false);
+    expect(fresh.terminal.fontSize).toBe(13);
+    expect(fresh.history.enabled).toBe(true);
+    expect(fresh.updates.autoCheck).toBe(true);
+  });
+});
+
+describe('projectSettings', () => {
+  it('возвращает точный набор ключей Настроек — не протаскивает Внутреннее состояние', async () => {
+    const { loadConfig } = await freshStore();
+    const { projectSettings } = await import('@shared/config');
+    const settings = projectSettings(loadConfig());
+    expect(Object.keys(settings).sort()).toEqual(
+      ['connection', 'guard', 'history', 'hotkeys', 'shownCounts', 'terminal', 'ui', 'updates'].sort()
+    );
+    expect(Object.keys(settings.history)).toEqual(['enabled']);
+    expect(Object.keys(settings.updates)).toEqual(['autoCheck']);
   });
 });
