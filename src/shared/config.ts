@@ -20,9 +20,6 @@ export interface AppConfig {
   /** Язык интерфейса (CLAUDE.md §5a): дефолт 'ru', fallback 'en'. */
   language: string;
   window: WindowState;
-  onboarding: {
-    completed: boolean; // OB-03
-  };
   ui: {
     expertMode: boolean; // SET-05
     hints: {

@@ -13,9 +13,6 @@ export function createDefaultConfig(appVersion: string): AppConfig {
       height: 800,
       maximized: false
     },
-    onboarding: {
-      completed: false
-    },
     ui: {
       expertMode: false,
       hints: {

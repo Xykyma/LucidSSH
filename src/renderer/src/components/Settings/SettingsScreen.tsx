@@ -16,6 +16,7 @@ import { Icon } from '@/components/common/Icon';
 import { LogoMark } from '@/components/common/LogoMark';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { useAppVersion } from '@/hooks/useAppVersion';
 import { beginHotkeyCapture } from '@/stores/hotkeyBus';
 import { parseReleaseNotes } from './releaseNotes';
 import {
@@ -66,6 +67,7 @@ export function SettingsScreen({ onOpenGuide }: { onOpenGuide: () => void }): JS
   );
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const resetConfirmBackdrop = useBackdropClose(() => setResetConfirmOpen(false));
+  const version = useAppVersion();
 
   useEscapeClose('settings-screen', closeSettings);
 
@@ -150,14 +152,16 @@ export function SettingsScreen({ onOpenGuide }: { onOpenGuide: () => void }): JS
             {section === 'interface' && <InterfaceSection config={config} update={update} />}
             {section === 'import' && <ImportSection />}
             {section === 'hotkeys' && <HotkeysSection />}
-            {section === 'about' && <AboutSection onOpenGuide={onOpenGuide} />}
+            {section === 'about' && (
+              <AboutSection onOpenGuide={onOpenGuide} version={version} />
+            )}
           </div>
         </div>
       </div>
 
       {/* Footer: сброс до заводских (SET-08) — виден для любого раздела */}
       <div className="flex shrink-0 items-center justify-between gap-[14px] border-t border-border-default px-[28px] py-[10px]">
-        <div className="text-[11.5px] text-text-dim">{t('settings.footer', { version: config.version })}</div>
+        <div className="text-[11.5px] text-text-dim">{t('settings.footer', { version })}</div>
         <button
           type="button"
           onClick={() => setResetConfirmOpen(true)}
@@ -858,7 +862,13 @@ function HotkeysSection(): JSX.Element {
   );
 }
 
-function AboutSection({ onOpenGuide }: { onOpenGuide: () => void }): JSX.Element {
+function AboutSection({
+  onOpenGuide,
+  version
+}: {
+  onOpenGuide: () => void;
+  version: string;
+}): JSX.Element {
   const { t, i18n } = useTranslation();
   const { config, update } = useConfig();
   const { status, check, download, install } = useUpdates();
@@ -921,7 +931,7 @@ function AboutSection({ onOpenGuide }: { onOpenGuide: () => void }): JSX.Element
           <div className="min-w-0 flex-1">
             <div className="text-[16px] font-semibold text-text-primary">LucidSSH</div>
             <div className="mt-[2px] text-[12.5px] text-text-muted">
-              {t('settings.about.versionOs', { version: config?.version ?? '—' })}
+              {t('settings.about.versionOs', { version: version || '—' })}
             </div>
             <div className="mt-1 text-[12px] text-text-dim">{t('settings.about.tagline')}</div>
           </div>

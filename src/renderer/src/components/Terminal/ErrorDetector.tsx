@@ -5,8 +5,8 @@ import type { ErrorExplanation } from '@shared/content';
 import { applyCommandSuggestion } from '@shared/fuzzyMatch';
 import { Icon } from '@/components/common/Icon';
 import { insertIntoComposer } from '@/stores/composerBus';
-import { useConfig } from '@/stores/config';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { useAppVersion } from '@/hooks/useAppVersion';
 
 /**
  * Панель детектора ошибок (ERR-03; скриншот 02-Error). Выезжает снизу области
@@ -23,9 +23,9 @@ export function ErrorDetector({
   onClose: () => void;
 }): JSX.Element {
   const { t } = useTranslation();
-  const { config } = useConfig();
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [questionCopied, setQuestionCopied] = useState(false);
+  const version = useAppVersion();
 
   void sessionId;
 
@@ -48,7 +48,7 @@ export function ErrorDetector({
       command: explanation.command,
       exitCode: explanation.exitCode !== undefined ? String(explanation.exitCode) : '—',
       output: explanation.stderr && explanation.stderr.trim() ? explanation.stderr : '—',
-      version: config?.version ?? '—'
+      version: version || '—'
     });
     window.lucidSSH.clipboardWrite(text);
     setQuestionCopied(true);

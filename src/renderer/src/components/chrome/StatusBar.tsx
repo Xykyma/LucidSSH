@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSessions } from '@/stores/sessions';
+import { useAppVersion } from '@/hooks/useAppVersion';
 
 /**
  * Статус-бар 24px, фон #0B0B0F (Design_Brief §3.1):
@@ -21,12 +22,8 @@ function formatKeyType(k: string): string {
 export function StatusBar(): JSX.Element {
   const { t } = useTranslation();
   const { sessions, activeSessionId } = useSessions();
-  const [version, setVersion] = useState('');
+  const version = useAppVersion();
   const [crypto, setCrypto] = useState<{ cipher: string; keyType: string } | null>(null);
-
-  useEffect(() => {
-    void window.lucidSSH.getAppInfo().then((info) => setVersion(info.version));
-  }, []);
 
   const active = sessions.find((s) => s.sessionId === activeSessionId);
   const connected = active?.status === 'connected';

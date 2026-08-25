@@ -119,8 +119,6 @@ export const IPC = {
 
   // --- Onboarding (OB-01…03) ---
   puttySessionsCount: 'onboarding:putty-count',
-  onboardingComplete: 'onboarding:complete',
-  onboardingStatus: 'onboarding:status',
 
   // --- Управление окном (кастомный тайтл-бар) ---
   windowMinimize: 'window:minimize',
