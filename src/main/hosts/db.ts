@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DASHBOARD_ALERT_ISSUES } from '@shared/dashboard';
 import { configDir } from '../config/store';
 import { resolveHostRefByName } from './resolveByName';
 
@@ -74,8 +75,75 @@ const MIGRATIONS: MigrationStep[] = [
     for (const [hostId, jumpId] of edges) {
       if (!edges.has(jumpId)) setJumpId.run(jumpId, hostId);
     }
+  },
+  // v3 — history_enabled переезжает в hosts (HIST-07), dismissedAlerts —
+  // в отдельную таблицу с каскадным удалением (.scratch/host-scoped-flags-to-db).
+  // Оба поля были внешними ключами на hosts, положенными в config.json, у
+  // которого нет ON DELETE CASCADE — отсюда и мигрируем: схема и разовый
+  // перенос дожившего до этой миграции config.json в одном шаге.
+  (db) => {
+    db.exec(`
+      ALTER TABLE hosts ADD COLUMN history_enabled INTEGER NOT NULL DEFAULT 1;
+
+      CREATE TABLE host_dismissed_alerts (
+        host_id INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        issue   TEXT    NOT NULL,
+        PRIMARY KEY (host_id, issue)
+      );
+    `);
+    // history.perHostDisabled не читается: в релизной сборке он не может быть
+    // непустым (нет писателя кроме GC) — переносить нечего.
+    const dismissedAlerts = readDismissedAlertsFromConfigJson();
+    if (Object.keys(dismissedAlerts).length === 0) return;
+    const existingIds = new Set(
+      (db.prepare('SELECT id FROM hosts').all() as Array<{ id: number }>).map((r) => r.id)
+    );
+    const insert = db.prepare(
+      'INSERT OR IGNORE INTO host_dismissed_alerts (host_id, issue) VALUES (?, ?)'
+    );
+    for (const [hostIdStr, issues] of Object.entries(dismissedAlerts)) {
+      const hostId = Number(hostIdStr);
+      // Мьюты по id, которых нет в hosts, — накопленный мусор (config.json не
+      // знает про ON DELETE CASCADE) — пропускаем, слепая вставка упала бы на FK.
+      if (!existingIds.has(hostId)) continue;
+      for (const issue of issues) insert.run(hostId, issue);
+    }
   }
 ];
+
+/**
+ * Разовое чтение `dashboard.dismissedAlerts` из ещё не мигрировавшего
+ * config.json (шаг v3). Отсутствующий, пустой или битый файл — штатный путь,
+ * не исключение: существующие тесты миграций работают во временной папке без
+ * config.json. Дублирует форму `mergeDismissedAlerts` (config/merge.ts)
+ * намеренно — это одноразовое знание про формат прошлой версии файла, мёртвое
+ * сразу после написания, ему не место в общем коде слияния настроек.
+ */
+function readDismissedAlertsFromConfigJson(): Record<number, string[]> {
+  try {
+    const raw = readFileSync(join(configDir(), 'config.json'), 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    const dashboard = (parsed as Record<string, unknown>)['dashboard'];
+    if (typeof dashboard !== 'object' || dashboard === null) return {};
+    const dismissedAlerts = (dashboard as Record<string, unknown>)['dismissedAlerts'];
+    if (typeof dismissedAlerts !== 'object' || dismissedAlerts === null || Array.isArray(dismissedAlerts)) {
+      return {};
+    }
+    const out: Record<number, string[]> = {};
+    for (const [hostIdStr, issues] of Object.entries(dismissedAlerts as Record<string, unknown>)) {
+      const hostId = Number(hostIdStr);
+      if (!Number.isInteger(hostId) || !Array.isArray(issues)) continue;
+      const filtered = issues.filter(
+        (i): i is string => typeof i === 'string' && (DASHBOARD_ALERT_ISSUES as readonly string[]).includes(i)
+      );
+      if (filtered.length > 0) out[hostId] = filtered;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 export function hostsDbPath(): string {
   return join(configDir(), 'hosts.db');

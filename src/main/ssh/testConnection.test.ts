@@ -47,6 +47,7 @@ const fakeInput = (overrides: Partial<HostInput> = {}): HostInput => ({
   username: 'nikita',
   authMethod: 'password',
   guardEnabled: true,
+  historyEnabled: true,
   ...overrides
 });
 
@@ -58,6 +59,7 @@ const fakeBastion = (overrides: Partial<Host> = {}): Host => ({
   username: 'nikita',
   authMethod: 'password',
   guardEnabled: true,
+  historyEnabled: true,
   sortOrder: 0,
   createdAt: '',
   updatedAt: '',

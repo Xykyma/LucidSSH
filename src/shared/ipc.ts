@@ -28,7 +28,6 @@ export const IPC = {
   configResetHotkeys: 'config:reset-hotkeys', // SET-10 — сброс только карты хоткеев, не всех настроек (в отличие от configReset/SET-08)
   configMarkHint: 'config:mark-hint', // счётчик показов подсказок (§5.1, SNIP-08)
   configResetHints: 'config:reset-hints', // «Сбросить счётчик показов подсказок» (SET-05)
-  configDismissDashboardAlert: 'config:dismiss-dashboard-alert', // DASH-09 «Больше не показывать»
   configReset: 'config:reset', // SET-08 сброс до заводских
   knownHostsList: 'security:known-hosts-list', // SET-04
   knownHostsDelete: 'security:known-hosts-delete',
@@ -54,6 +53,11 @@ export const IPC = {
   groupRename: 'groups:rename',
   groupSetCollapsed: 'groups:set-collapsed',
   groupDelete: 'groups:delete',
+
+  // DASH-09 «Больше не показывать»: канал про находку дашборда, hostId в ней —
+  // лишь адрес, не CRUD хоста (.scratch/host-scoped-flags-to-db) — префикс
+  // dashboard:, а не host:.
+  dashboardDismissAlert: 'dashboard:dismiss-alert',
 
   // --- Мастер создания SSH-ключа (HM-12) ---
   keygenAvailable: 'keygen:available',

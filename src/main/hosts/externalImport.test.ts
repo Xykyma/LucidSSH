@@ -57,7 +57,8 @@ describe('applyExternalImport — резолв ProxyJump', () => {
       port: 22,
       username: 'root',
       authMethod: 'password',
-      guardEnabled: true
+      guardEnabled: true,
+      historyEnabled: true
     });
 
     const res = applyExternalImport(
@@ -132,7 +133,8 @@ describe('applyExternalImport — резолв ProxyJump', () => {
       port: 22,
       username: 'root',
       authMethod: 'password' as const,
-      guardEnabled: true
+      guardEnabled: true,
+      historyEnabled: true
     };
     const rootId = repo.createHost({ ...base, name: 'root-bastion' });
     repo.createHost({ ...base, name: 'mid', address: '198.51.100.2', proxyJumpHostId: rootId });

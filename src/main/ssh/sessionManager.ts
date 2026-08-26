@@ -234,6 +234,7 @@ export async function connectQuickHost(
     username,
     authMethod: 'password',
     guardEnabled: true,
+    historyEnabled: true,
     sortOrder: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()

@@ -70,7 +70,7 @@ const fakeConfig = (): AppConfig =>
     // recordCommand (issue 11 / ADR-0005 тесты гоняют реальный command-finished
     // через htop-маркер) выходит рано при enabled: false — не нужно мокать
     // getHost/recordHistory сверх уже замоканного в файле.
-    history: { enabled: false, perHostDisabled: [] },
+    history: { enabled: false },
     // HM-12: deployPendingKey (keygen.ts) читает это через тот же мокнутый
     // loadConfig — без поля падает на .find() при 'ready' с паролем.
     pendingKeyDeployments: []
@@ -84,6 +84,7 @@ const fakeHost = (overrides: Partial<Host> = {}): Host => ({
   username: 'nikita',
   authMethod: 'password',
   guardEnabled: true,
+  historyEnabled: true,
   sortOrder: 0,
   createdAt: '',
   updatedAt: '',

@@ -8,7 +8,7 @@ import {
   type DashboardMetrics
 } from '@shared/dashboard';
 import { emit } from '../ipc/events';
-import { loadConfig, updateConfig } from '../config/store';
+import { listDismissedAlerts, replaceDismissedAlerts } from '../hosts/dashboardMutes';
 
 /** Логгер в лог соединения сессии (передаёт sessionManager, чтобы не плодить цикл импортов). */
 export type DashboardLogger = (messageKey: string, params?: Record<string, string | number>) => void;
@@ -248,14 +248,11 @@ function poll(sessionId: string): void {
         // DASH-09: первый успешный опрос — одноразовое решение о health-баннере.
         state.firstSuccessDone = true;
         const rawIssues = computeAlertIssues(metrics, parseRebootRequired(output));
-        const dismissed = loadConfig().dashboard.dismissedAlerts[state.hostId] ?? [];
+        const dismissed = listDismissedAlerts(state.hostId);
         const { keepDismissed, issuesToShow } = applyDismissals(rawIssues, dismissed);
         if (keepDismissed.length !== dismissed.length) {
           // Часть замьюченных находок больше не проявляется — снимаем mute (self-clearing).
-          updateConfig((cfg) => {
-            if (keepDismissed.length > 0) cfg.dashboard.dismissedAlerts[state.hostId] = keepDismissed;
-            else delete cfg.dashboard.dismissedAlerts[state.hostId];
-          });
+          replaceDismissedAlerts(state.hostId, keepDismissed);
         }
         if (issuesToShow.length > 0) sendAlert(sessionId, { issues: issuesToShow });
       }

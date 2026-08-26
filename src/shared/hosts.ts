@@ -25,6 +25,7 @@ export interface Host {
   proxyJumpHostId?: number; // ссылка на id другого хоста-bastion (SSH-05)
   note?: string;
   guardEnabled: boolean;
+  historyEnabled: boolean; // HIST-07 — запись истории команд для этого хоста
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -45,6 +46,7 @@ export interface HostInput {
   proxyJumpHostId?: number;
   note?: string;
   guardEnabled: boolean;
+  historyEnabled: boolean;
 }
 
 export interface ImportPreview {

@@ -1,7 +1,6 @@
 import { ipcMain } from 'electron';
 import { IPC } from '@shared/ipc';
 import { projectSettings, type Settings, type UpdateHotkeyResult } from '@shared/config';
-import { DASHBOARD_ALERT_ISSUES, type DashboardAlertIssue } from '@shared/dashboard';
 import { INTERACTIVE_PROGRAMS } from '@shared/interactivePrograms';
 import {
   DEFAULT_HOTKEYS,
@@ -147,29 +146,6 @@ export function registerConfigIpcHandlers(): void {
       })
     );
   });
-
-  // DASH-09: «Больше не показывать» для конкретной находки на конкретном хосте —
-  // health-баннер main-процесса сверяется с этим списком перед отправкой (dashboard.ts).
-  // Возвращает void, не Settings/AppConfig: dismissedAlerts — Внутреннее
-  // состояние, renderer его не видит, а Promise<AppConfig> раньше приглашал
-  // считать, что зеркало освежилось (ADR-0014).
-  ipcMain.handle(
-    IPC.configDismissDashboardAlert,
-    (event, rawHostId: unknown, rawIssue: unknown): void => {
-      assertSenderIsMainWindow(event);
-      if (typeof rawHostId !== 'number' || !Number.isInteger(rawHostId)) {
-        throw new IpcValidationError('hostId: integer expected');
-      }
-      if (!(DASHBOARD_ALERT_ISSUES as readonly string[]).includes(rawIssue as string)) {
-        throw new IpcValidationError('issue: unknown');
-      }
-      const issue = rawIssue as DashboardAlertIssue;
-      updateConfig((cfg) => {
-        const list = cfg.dashboard.dismissedAlerts[rawHostId] ?? [];
-        if (!list.includes(issue)) cfg.dashboard.dismissedAlerts[rawHostId] = [...list, issue];
-      });
-    }
-  );
 }
 
 /** Разрешённые id подсказок (обучающие подсказки с лимитом показов). */
