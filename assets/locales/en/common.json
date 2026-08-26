@@ -519,10 +519,16 @@
     "notePlaceholder": "Note for the command…",
     "delete": "Delete entry",
     "clear": "Clear history",
+    "clearHost": "Clear host history",
     "clearConfirm": {
       "title": "Clear all history?",
       "body": "All {{total}} command history entries will be permanently deleted. This action cannot be undone.",
       "confirm": "Clear"
+    },
+    "clearHostConfirm": {
+      "title": "Clear history for \"{{host}}\"?",
+      "body_one": "{{count}} command history entry for \"{{host}}\" will be permanently deleted. Other hosts' entries are not affected. This action cannot be undone.",
+      "body_other": "{{count}} command history entries for \"{{host}}\" will be permanently deleted. Other hosts' entries are not affected. This action cannot be undone."
     },
     "exit": "exit {{code}}",
     "footer": "Showing {{shown}} of {{total}} commands",

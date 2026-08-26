@@ -110,6 +110,8 @@ export const IPC = {
   historyAddNote: 'history:add-note',
   historyDelete: 'history:delete',
   historyClear: 'history:clear',
+  historyCountForHost: 'history:count-for-host',
+  historyClearForHost: 'history:clear-for-host',
 
   // --- Сниппеты / избранное (SNIP-01…08) ---
   snippetsList: 'snippets:list',
