@@ -148,3 +148,17 @@ export function deleteHistoryEntry(id: number): void {
 export function clearHistory(): void {
   openHistoryDb().prepare('DELETE FROM history').run();
 }
+
+/** Число записей одного хоста (HIST-08) — не зависит от текстового поиска. */
+export function historyCountForHost(hostId: number): number {
+  return (
+    openHistoryDb()
+      .prepare('SELECT COUNT(*) c FROM history WHERE host_id = ?')
+      .get(hostId) as { c: number }
+  ).c;
+}
+
+/** Очистить историю только одного хоста, не трогая записи остальных (HIST-08). */
+export function clearHistoryForHost(hostId: number): void {
+  openHistoryDb().prepare('DELETE FROM history WHERE host_id = ?').run(hostId);
+}

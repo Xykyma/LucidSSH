@@ -220,6 +220,10 @@ const api = {
     ipcRenderer.invoke(IPC.historyAddNote, id, note),
   deleteHistoryEntry: (id: number): Promise<void> => ipcRenderer.invoke(IPC.historyDelete, id),
   clearHistory: (): Promise<void> => ipcRenderer.invoke(IPC.historyClear),
+  historyCountForHost: (hostId: number): Promise<number> =>
+    ipcRenderer.invoke(IPC.historyCountForHost, hostId),
+  clearHistoryForHost: (hostId: number): Promise<void> =>
+    ipcRenderer.invoke(IPC.historyClearForHost, hostId),
 
   // --- Сниппеты / избранное ---
   listSnippets: (hostId?: number): Promise<Snippet[]> =>

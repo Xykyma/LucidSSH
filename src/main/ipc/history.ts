@@ -4,7 +4,9 @@ import type { HistoryEntry, HistoryQuery, Snippet } from '@shared/history';
 import {
   addHistoryNote,
   clearHistory,
+  clearHistoryForHost,
   deleteHistoryEntry,
+  historyCountForHost,
   listHistory,
   totalHistoryCount
 } from '../history/repository';
@@ -26,6 +28,20 @@ import { validateId, validateOptionalHostId } from '../hosts/validate';
  * IPC истории и сниппетов (HIST-01…07, SNIP-01…08). Все аргументы валидируются
  * в main. Секреты в командах уже замаскированы на уровне записи (HIST-07).
  */
+
+/**
+ * hostId для операций над историей допускает 0 — сентинел Быстрого подключения
+ * (HM-11), у которого нет строки в `hosts`, но есть свои записи в `history`
+ * (host_id=0). В отличие от validateId (>=1) здесь 0 — валидный, реальный
+ * хост для очистки/подсчёта, а не «контекст не задан», как в
+ * validateOptionalHostId (снипеты).
+ */
+export function validateHistoryHostId(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+    throw new IpcValidationError('hostId: non-negative integer expected');
+  }
+  return v;
+}
 
 function str(v: unknown, name: string, maxLen: number, required = true): string | undefined {
   if (v === undefined || v === null || v === '') {
@@ -69,6 +85,16 @@ export function registerHistoryIpcHandlers(): void {
   ipcMain.handle(IPC.historyClear, (event): void => {
     assertSenderIsMainWindow(event);
     clearHistory();
+  });
+
+  ipcMain.handle(IPC.historyCountForHost, (event, rawHostId: unknown): number => {
+    assertSenderIsMainWindow(event);
+    return historyCountForHost(validateHistoryHostId(rawHostId));
+  });
+
+  ipcMain.handle(IPC.historyClearForHost, (event, rawHostId: unknown): void => {
+    assertSenderIsMainWindow(event);
+    clearHistoryForHost(validateHistoryHostId(rawHostId));
   });
 
   // --- Сниппеты ---

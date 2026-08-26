@@ -40,10 +40,40 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
   const [noteText, setNoteText] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearHostCount, setClearHostCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // hostFilter 'session' резолвится в activeHostId — фильтр «эта сессия» тоже
+  // очищает по хосту, а не всё сразу (HIST-08). activeHostId=0 — Быстрое
+  // подключение (HM-11): валидный хост для очистки, не «фильтр не задан»,
+  // поэтому сравнение строго с 'all'/'session', а не truthy-проверка.
+  const clearTargetHostId =
+    hostFilter === 'all' ? undefined : hostFilter === 'session' ? activeHostId : hostFilter;
+
+  const openClearConfirm = async (): Promise<void> => {
+    // hostFilter указывал на «эту сессию», но активная сессия с тех пор
+    // пропала (сессия закрылась, пока дровер оставался открытым) — не
+    // подставляем случайно «очистить всё», а тихо возвращаемся к «Все».
+    if (hostFilter !== 'all' && clearTargetHostId === undefined) {
+      setHostFilter('all');
+      return;
+    }
+    if (clearTargetHostId !== undefined) {
+      setClearHostCount(await window.lucidSSH.historyCountForHost(clearTargetHostId));
+    }
+    setClearConfirmOpen(true);
+  };
+
   const clearAll = async (): Promise<void> => {
-    await window.lucidSSH.clearHistory();
+    if (clearTargetHostId !== undefined) {
+      await window.lucidSSH.clearHistoryForHost(clearTargetHostId);
+      setHostFilter('all');
+    } else if (hostFilter === 'all') {
+      await window.lucidSSH.clearHistory();
+    }
+    // hostFilter !== 'all' здесь означало бы, что цель хоста пропала между
+    // открытием диалога и подтверждением (см. openClearConfirm) — ничего не
+    // делаем, а не откатываемся к полной очистке.
     setClearConfirmOpen(false);
     refreshHistory();
   };
@@ -61,11 +91,19 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
 
   useEscapeClose('history-drawer', closeHistory);
 
-  const hostChips = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const e of entries) if (e.hostId !== undefined) map.set(e.hostId, e.hostName);
-    return [...map.entries()];
-  }, [entries]);
+  // Имена хостов копятся за время жизни дровера, а не пересчитываются с нуля
+  // из текущего entries: иначе поиск, сузивший entries до нуля совпадений по
+  // выбранному хосту, стирает и чип, и имя хоста в диалоге подтверждения
+  // очистки (пустое «Очистить историю хоста «»?» перед необратимым удалением).
+  // Мутация ref в теле рендера — принятый паттерн ленивого кеша (не эффект),
+  // без гонок между рендером и useEffect.
+  const hostNamesRef = useRef<Map<number, string>>(new Map());
+  for (const e of entries) if (e.hostId !== undefined) hostNamesRef.current.set(e.hostId, e.hostName);
+
+  const hostChips = [...hostNamesRef.current.entries()];
+
+  const clearTargetHostName =
+    clearTargetHostId !== undefined ? hostNamesRef.current.get(clearTargetHostId) : undefined;
 
   const visible = useMemo(
     () =>
@@ -334,11 +372,11 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
           {total > 0 && (
             <button
               type="button"
-              onClick={() => setClearConfirmOpen(true)}
+              onClick={() => void openClearConfirm()}
               className="flex items-center gap-1 rounded-[4px] px-2 py-1 text-[11.5px] text-text-dim hover:bg-danger/10 hover:text-danger"
             >
               <Icon name="trash" size={12} />
-              {t('history.clear')}
+              {clearTargetHostId !== undefined ? t('history.clearHost') : t('history.clear')}
             </button>
           )}
         </div>
@@ -346,13 +384,22 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
 
       {clearConfirmOpen && (
         <ConfirmDialog
-          title={t('history.clearConfirm.title')}
+          title={
+            clearTargetHostId !== undefined
+              ? t('history.clearHostConfirm.title', { host: clearTargetHostName ?? '' })
+              : t('history.clearConfirm.title')
+          }
           confirmLabel={t('history.clearConfirm.confirm')}
           danger
           onConfirm={() => void clearAll()}
           onCancel={() => setClearConfirmOpen(false)}
         >
-          {t('history.clearConfirm.body', { total })}
+          {clearTargetHostId !== undefined
+            ? t('history.clearHostConfirm.body', {
+                host: clearTargetHostName ?? '',
+                count: clearHostCount
+              })
+            : t('history.clearConfirm.body', { total })}
         </ConfirmDialog>
       )}
     </div>

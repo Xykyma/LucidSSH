@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prepareOutput } from './repository';
 
 /**
@@ -46,5 +49,63 @@ describe('prepareOutput', () => {
   it('пустой/отсутствующий вывод -> null, не падает', () => {
     expect(prepareOutput(undefined, false).output).toBeNull();
     expect(prepareOutput('', false).output).toBeNull();
+  });
+});
+
+/**
+ * Очистка истории по одному хосту (HIST-08, .scratch/history-clear-per-host).
+ * Тот же приём мока electron, что и в history/snippets.test.ts —
+ * configDir() = app.getPath('userData').
+ */
+let dir = '';
+vi.mock('electron', () => ({
+  app: {
+    getPath: () => dir,
+    getVersion: () => '1.2.3-test'
+  }
+}));
+
+async function freshRepo(): Promise<typeof import('./repository')> {
+  vi.resetModules();
+  return import('./repository');
+}
+
+describe('clearHistoryForHost / historyCountForHost', () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lucidssh-history-test-'));
+  });
+
+  afterEach(async () => {
+    const { closeHistoryDb } = await import('./db');
+    closeHistoryDb();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const rec = (hostId: number, hostName: string) => ({
+    command: `echo ${hostName}`,
+    hostId,
+    hostName,
+    username: 'root'
+  });
+
+  it('clearHistoryForHost удаляет только записи своего hostId', async () => {
+    const repo = await freshRepo();
+    repo.recordHistory(rec(1, 'alpha'));
+    repo.recordHistory(rec(1, 'alpha'));
+    repo.recordHistory(rec(2, 'beta'));
+
+    repo.clearHistoryForHost(1);
+
+    expect(repo.historyCountForHost(1)).toBe(0);
+    expect(repo.historyCountForHost(2)).toBe(1);
+    expect(repo.totalHistoryCount()).toBe(1);
+  });
+
+  it('historyCountForHost считает верно, включая ноль для хоста без записей', async () => {
+    const repo = await freshRepo();
+    repo.recordHistory(rec(1, 'alpha'));
+
+    expect(repo.historyCountForHost(1)).toBe(1);
+    expect(repo.historyCountForHost(999)).toBe(0);
   });
 });
