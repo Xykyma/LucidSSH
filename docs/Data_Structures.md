@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Document version | 1.1 |
-| Date | June 27, 2026 |
+| Document version | 1.2 |
+| Date | August 26, 2026 |
 | Purpose | DB schemas, built-in database formats, IPC contracts, and settings format for Claude Code |
 | Base documents | `TZ.md`, `Security_Guide.md` |
 
@@ -56,6 +56,7 @@ CREATE TABLE hosts (
   proxy_jump_host_id INTEGER REFERENCES hosts(id) ON DELETE SET NULL, -- jump host, a reference to another saved host (SSH-05)
   note          TEXT,
   guard_enabled INTEGER NOT NULL DEFAULT 1,  -- per-host guard disable (GUARD-05)
+  history_enabled INTEGER NOT NULL DEFAULT 1, -- per-host command history (HIST-07)
   sort_order    INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT    NOT NULL,
   updated_at    TEXT    NOT NULL
@@ -64,7 +65,32 @@ CREATE TABLE hosts (
 );
 ```
 
-### 2.3 TypeScript types
+`history_enabled` is a Setting (the window writes it), positive polarity like `guard_enabled`.
+Before document version 1.2 it lived in `config.json` as `history.perHostDisabled: number[]`
+(negative, no UI) — moved to a column for `ON DELETE CASCADE` cleanup on host deletion.
+Rationale: `docs/agent/adr/0015-host-scoped-state-lives-with-the-host.md`.
+
+### 2.3 The `host_dismissed_alerts` table
+
+```sql
+CREATE TABLE host_dismissed_alerts (
+  host_id INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+  issue   TEXT    NOT NULL,            -- 'cpu' | 'ram' | 'disk' | 'rebootRequired' (DASH-10)
+  PRIMARY KEY (host_id, issue)
+);
+```
+
+Dismissed health-banner findings (DASH-10) — "Don't show again" on a host. Deliberately not
+a column on `hosts`: this is app state, not a Setting — the renderer never touches it.
+Before document version 1.2 it lived in `config.json` as `dashboard.dismissedAlerts`
+(never itself listed in this doc's `AppConfig` block in §6 — a pre-existing gap that
+predates this migration); moving it here also gave it garbage collection for deleted hosts,
+which it never had before. Rationale: `docs/agent/adr/0015-host-scoped-state-lives-with-the-host.md`.
+
+Quick Connect has no saved host row, so its mute can't persist here — the "Don't show again"
+button is hidden in its banner instead.
+
+### 2.4 TypeScript types
 
 ```ts
 type AuthMethod = 'password' | 'key';
@@ -89,6 +115,7 @@ interface Host {
   proxyJumpHostId?: number;
   note?: string;
   guardEnabled: boolean;
+  historyEnabled: boolean; // HIST-07 — command history for this host
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -107,10 +134,11 @@ interface HostInput {
   proxyJumpHostId?: number;
   note?: string;
   guardEnabled: boolean;
+  historyEnabled: boolean;
 }
 ```
 
-### 2.4 Relation to Credential Manager
+### 2.5 Relation to Credential Manager
 
 ```ts
 // keychain/ — the only place that touches secrets
@@ -418,7 +446,8 @@ interface AppConfig {
   };
   history: {
     enabled: boolean;             // HIST-07: global disable
-    perHostDisabled: number[];    // hostIds for which history is off
+    // Per-host disable is not here: hosts.history_enabled in hosts.db (§2.2),
+    // moved out of this field in document version 1.2.
   };
   shownCounts: Record<string, number>; // hint id → how many times shown (cap 3)
   updates: {
