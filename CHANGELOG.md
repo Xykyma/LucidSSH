@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **A per-host switch for command history.** The connection form now has a "Record command history" toggle, independent of the global one in Settings → Security. Commands already recorded for that host are not affected.
+
 ### Changed
 
 - **Esc now closes exactly one thing, in a consistent order, everywhere.** All 23 places that used to listen for Esc on their own — dialogs, drawers, the context menu, the snippet palette, search, the error panel, and in-place edits like a tab rename or a history note — now go through a single shared stack. The most recently opened thing closes first, regardless of where keyboard focus happens to be.
@@ -13,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Muting a dashboard health finding during a Quick Connect session no longer silences that finding for every other Quick Connect session.** All such sessions shared one mute entry with nowhere host-specific to live. Quick Connect sessions have no saved host to attach a persistent mute to, so the "Don't show again" button is no longer shown for them; the banner's close button still works as before.
 - **"Reset settings to defaults" no longer loses SSH keys pending deployment to the server, or changes the interface language.** Both used to be wiped as a side effect of the reset, alongside the actual settings — a key generated in step 4 of the SSH key wizard but not yet copied to the server would silently disappear, so the next connection attempt used a key the server didn't recognize.
 - **Esc no longer leaks into the remote session while also closing a panel.** Previously the key reached xterm's own handling before the panel's listener ran (no `preventDefault`), so it did both: the control byte was sent to the server *and* the panel closed. Now Esc belongs to the open panel until it's closed.
 - **Esc while editing a history note no longer closes the whole History drawer.** The note input and the drawer each listened for Esc independently; cancelling the note also closed the drawer underneath it.
