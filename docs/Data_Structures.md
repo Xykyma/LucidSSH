@@ -20,8 +20,8 @@
 | Passwords and passphrases | Windows Credential Manager | system | Yes — via keytar |
 | Known hosts | File | `%APPDATA%\LucidSSH\known_hosts` | No |
 | Settings | JSON | `%APPDATA%\LucidSSH\config.json` | No |
-| Error database | Bundled with the package | `assets/errors.json` | No |
-| Command catalog | Bundled with the package | `assets/commands.json` | No |
+| Error database | Bundled with the package | `assets/errors.core.json` + `assets/locales/{lang}/errors.json` | No |
+| Command catalog | Bundled with the package | `assets/commands.core.json` + `assets/locales/{lang}/commands.json` | No |
 
 Files are created with access restricted to the current Windows user (as far as the OS supports it). All SQL queries are parameterized; concatenating values into SQL is forbidden. History and hosts live in **separate** database files, so disabling/clearing history never touches hosts.
 
@@ -169,7 +169,11 @@ CREATE TABLE history (
   exit_code   INTEGER,                       -- NULL until it finishes
   guard_status TEXT,                         -- NULL | 'blocked' | 'confirmed' (HIST-05)
   has_secret  INTEGER NOT NULL DEFAULT 0,   -- 1 if a value in the command was masked
-  note        TEXT
+  is_favorite INTEGER NOT NULL DEFAULT 0,   -- reserved for "favorites": nothing writes it besides the
+                                            -- DEFAULT, no UI; only read by the FIFO deletion exclusion (§3.4)
+  note        TEXT,
+  output      TEXT,                         -- command output, masked and truncated (§3.4); NULL = not saved
+  output_truncated INTEGER NOT NULL DEFAULT 0 -- 1 if output was cut by the limit (§3.4)
 );
 
 CREATE INDEX idx_history_command ON history(command);
@@ -194,6 +198,19 @@ interface HistoryEntry {
   guardStatus?: GuardStatus;
   hasSecret: boolean;
   note?: string;
+  output?: string;          // masked and truncated (§3.4); undefined = not saved
+  outputTruncated?: boolean;
+}
+
+/** Recording a new command (main masks it and fills in metadata, HIST-07). */
+interface HistoryRecordInput {
+  command: string;          // raw — masked in main
+  hostId?: number;
+  hostName: string;
+  username: string;
+  exitCode?: number;
+  guardStatus?: GuardStatus;
+  output?: string;          // raw command output — masked/truncated in main
 }
 ```
 
@@ -221,7 +238,7 @@ const SECRET_PATTERNS: { re: RegExp; mask: (m: RegExpMatchArray) => string }[] =
 
 ### 3.4 FIFO limit
 
-A 10,000-entry limit (HIST-06). Once exceeded, the oldest entry by `started_at` is removed, **except** entries marked as favorites (`is_favorite = 1`). Terminal output is not saved by default.
+A 10,000-entry limit (HIST-06). Once exceeded, the oldest entry by `started_at` is removed, **except** entries marked as favorites (`is_favorite = 1` — the column is reserved: nothing writes it besides the default, and there's no UI to mark an entry favorite yet). Command output is saved when the caller provides it: masked with the same rules as the command (if the command itself already contained a secret, output isn't saved at all), and truncated at a 4000-character limit (`output_truncated = 1` when truncated).
 
 ---
 
@@ -269,9 +286,11 @@ type SnippetScope = 'global' | 'server';
 
 ---
 
-## 4. Built-in database — errors.json
+## 4. Built-in database — errors.core.json + translation
 
-### 4.1 Format
+The schema is multi-language (CLAUDE.md §5a): the technical part (`id`, `match`, `category`, `scope`, `checks[].command`) is shared, lives in `assets/errors.core.json`, and is never translated or duplicated per language. The human-readable text (`title`, `explanation`, `checks[].text`) lives in `assets/locales/{lang}/errors.json`, linked to the core by `id`. Loading and merging — `src/main/content/loader.ts` (`loadErrorPatterns`) and `src/main/content/merge.ts` (`mergeErrors`), covered by required tests (CLAUDE.md §10).
+
+### 4.1 Core format (`errors.core.json`)
 
 ```json
 {
@@ -281,26 +300,42 @@ type SnippetScope = 'global' | 'server';
       "id": "permission-denied",
       "match": "(?i)permission denied",
       "category": "filesystem",
-      "title": "Permission denied",
-      "explanation": "The current user doesn't have permission for this action. The file or directory belongs to another user (often root).",
+      "scope": "command",
       "checks": [
-        { "text": "Run with sudo", "command": "sudo {original}" },
-        { "text": "Check the owner", "command": "ls -la {target}" },
-        { "text": "Check the current user", "command": "whoami" }
-      ],
-      "scope": "command"
+        { "command": "sudo {original}" },
+        { "command": "ls -la {target}" },
+        { "command": "whoami" }
+      ]
     }
   ]
 }
 ```
 
-### 4.2 TypeScript type
+### 4.2 Translation format (`locales/{lang}/errors.json`)
+
+An object keyed by the core pattern's `id`. `checks` is an array of strings the same length and in the same order as the core's `checks` (matched by index, not by key).
+
+```json
+{
+  "permission-denied": {
+    "title": "Permission denied",
+    "explanation": "The current user doesn't have permission for this action. The file or directory belongs to another user (often root).",
+    "checks": ["Run with sudo", "Check the owner and permissions", "Check who you are"]
+  }
+}
+```
+
+### 4.3 Merging (`mergeErrors`)
+
+For each core pattern, the active language's translation is used; if the key is missing, it falls back to the fallback language's translation (`ru`, CLAUDE.md §5a); if missing there too, `title` falls back to the `id` itself, `explanation` to an empty string, and `checks[i].text` to an empty string (a partial translation shouldn't drop the entry, only impoverish it). `checks[i].command` always comes from the core — that substitution text is never translated.
+
+### 4.4 TypeScript type (merged result)
 
 ```ts
 type ErrorScope = 'command' | 'ssh-connection';
 
 interface ErrorCheck {
-  text: string;             // what to check
+  text: string;             // what to check, localized
   command?: string;         // a suggested command; {original}/{target} are substituted SAFELY
 }
 
@@ -308,25 +343,22 @@ interface ErrorPattern {
   id: string;
   match: string;            // a regular expression (compiled on load)
   category: string;
-  title: string;
-  explanation: string;      // localized text (NFR-07)
+  title: string;            // after merging with the translation
+  explanation: string;      // after merging with the translation (NFR-07)
   checks: ErrorCheck[];
   scope: ErrorScope;
 }
-
-interface ErrorsDatabase {
-  version: string;          // semver, checked against the app version
-  patterns: ErrorPattern[];
-}
 ```
 
-### 4.3 Required coverage (ERR-04, ERR-05)
+`loadErrorPatterns(lang)` returns `ErrorPattern[]` directly — there's no separate wrapper type with a `version` field for the merged result; `version` only exists on the core format (§4.1) and is checked against the app version (OQ-06, §9.4).
+
+### 4.5 Required coverage (ERR-04, ERR-05)
 
 permission denied, no such file or directory, command not found, connection refused, disk full, out of memory, segmentation fault, syntax error; SSH: Connection refused, Permission denied (publickey), Host key verification failed, Connection timed out.
 
-### 4.4 Extension point for 1.2
+### 4.6 Extension point for 1.2
 
-The detector returns a result shaped like `{ matched: ErrorPattern } | { matched: null, fallback: FallbackRef }`. In 1.0, `fallback` leads to the generic template / documentation search (ERR-06). In 1.2, the same `fallback` will route to a local LLM (spec §12.13). The detector's contract doesn't need to change for that.
+The detector returns a result shaped like `{ matched: true, explanation: ErrorExplanation } | { matched: false, fallback: FallbackRef }` (`DetectResult`, `src/main/errors/detector.ts`). In 1.0, `fallback` leads to the generic template / documentation search (ERR-06). In 1.2, the same `fallback` will route to a local LLM (spec §12.13). The detector's contract doesn't need to change for that.
 
 ```ts
 interface FallbackRef {
@@ -339,9 +371,11 @@ interface FallbackRef {
 
 ---
 
-## 5. Built-in database — commands.json
+## 5. Built-in database — commands.core.json + translation
 
-### 5.1 Format
+The same split as §4 (CLAUDE.md §5a): the technical fields (`name`, `category`, `dangerous`, `flags[].flag`) live in `assets/commands.core.json` and are never translated; `summary`, `keywords`, `flags[].desc`, and category labels live in `assets/locales/{lang}/commands.json`. Loading and merging — `loadCommandCatalog`/`mergeCommands` (the same files as in §4).
+
+### 5.1 Core format (`commands.core.json`)
 
 ```json
 {
@@ -351,42 +385,60 @@ interface FallbackRef {
     {
       "name": "ls",
       "category": "files",
-      "summary": "List a directory's contents",
-      "keywords": ["list", "files", "directory", "show"],
-      "flags": [
-        { "flag": "-l", "desc": "Detailed listing with permissions and size" },
-        { "flag": "-la", "desc": "Detailed, including hidden files" },
-        { "flag": "-h", "desc": "Human-readable sizes" },
-        { "flag": "-R", "desc": "Recurse into subdirectories" }
-      ],
-      "dangerous": false
+      "dangerous": false,
+      "flags": [{ "flag": "-l" }, { "flag": "-la" }, { "flag": "-h" }, { "flag": "-R" }]
     }
   ]
 }
 ```
 
-### 5.2 TypeScript type
+### 5.2 Translation format (`locales/{lang}/commands.json`)
+
+```json
+{
+  "categories": { "files": "Files", "processes": "Processes", "network": "Network", "system": "System", "text": "Text" },
+  "commands": {
+    "ls": {
+      "summary": "List a directory's contents",
+      "keywords": ["list", "files", "directory", "show"],
+      "flags": {
+        "-l": "Detailed listing with permissions and size",
+        "-la": "Detailed, including hidden files",
+        "-h": "Human-readable sizes",
+        "-R": "Recurse into subdirectories"
+      }
+    }
+  }
+}
+```
+
+### 5.3 Merging (`mergeCommands`)
+
+A category's label and a command's `summary`/`keywords`/`flags[].desc` come from the active language's translation; if the key is missing, from the fallback translation (`ru`); if missing there too, the category label falls back to its technical name, `summary` falls back to the command's `name`, and `keywords`/`desc` fall back to empty. The result is `CommandsDatabase.categoryLabels`, kept separate from `categories` (the list of technical names).
+
+### 5.4 TypeScript type (merged result)
 
 ```ts
 type CommandCategory = 'files' | 'processes' | 'network' | 'system' | 'text';
 
 interface CommandFlag {
   flag: string;             // e.g. "-la"
-  desc: string;             // localized explanation (NFR-07)
+  desc: string;             // localized explanation (NFR-07), after merging
 }
 
 interface CatalogCommand {
   name: string;
   category: CommandCategory;
-  summary: string;          // a one-line explanation
+  summary: string;          // a one-line explanation, after merging with the translation
   keywords: string[];       // for localized search: "delete" → rm (CAT-05)
   flags: CommandFlag[];
   dangerous: boolean;       // a UI hint; the guard makes the actual decision, not this field
 }
 
 interface CommandsDatabase {
-  version: string;
-  categories: CommandCategory[];
+  version: string;                        // from the core (§5.1)
+  categories: CommandCategory[];          // technical names, from the core
+  categoryLabels: Record<string, string>; // labels after merging with the translation (§5.3)
   commands: CatalogCommand[];
 }
 ```
@@ -397,19 +449,11 @@ Clicking a flag builds the string and **sends it through the guard** (CAT-04 + G
 
 ## 6. config.json
 
+Split by who initiates the write (ADR-0014): `Settings` is written by the window (both sides read it — this is the only part the renderer gets via `configGet`), `AppState` is written by main, the window never sees it. The format of the file on disk doesn't change — the file holds their intersection; the split is only the line drawn for what gets handed to the renderer. Mirrors `src/shared/config.ts` exactly. `HotkeyAction` (`shared/hotkeys.ts`) and `PendingKeyDeployment` (`shared/keygen.ts`) are types from neighboring modules, not redefined here; their IPC contract (SET-10, HM-12) is part of the future full rewrite of §7.
+
 ```ts
-interface AppConfig {
-  version: string;
-  window: {
-    x?: number;
-    y?: number;
-    width: number;
-    height: number;
-    maximized: boolean;           // WIN-01
-  };
-  onboarding: {
-    completed: boolean;           // OB-03: first run completed
-  };
+/** Written by the window, read by both sides. Handed to the renderer whole (`configGet`). */
+interface Settings {
   ui: {
     expertMode: boolean;          // quick toggle to disable ALL hints (SET-05)
     // granular toggles (SET-05) — expertMode sets all of these to false
@@ -419,13 +463,15 @@ interface AppConfig {
       errorPanel: boolean;        // error detector panel (ERR-03)
       connectionDialog: boolean;  // learning hints in the connection dialog
     };
-    theme: 'dark';                // dark only in 1.0; 'light' | string to be added in 1.1/1.2
+    theme: 'dark';                // dark only in 1.0
     notifications: {
       systemToasts: boolean;      // Windows system notifications (NOTIF-04)
       longCommandThresholdSec: number; // 0 = off (NOTIF-02)
     };
     dashboardVisible: boolean;    // DASH-04
     catalogPanelOpen: boolean;
+    leftPanelWidth: number;       // 160..340
+    rightPanelWidth: number;      // 200..480
   };
   terminal: {
     font: string;                 // TERM-04
@@ -444,24 +490,51 @@ interface AppConfig {
   guard: {
     globalEnabled: boolean;       // GUARD-05
   };
+  /** SET-10: bindings for the 9 editable hotkeys. Esc/F1 aren't included —
+   *  they're fixed (FIXED_HOTKEYS in shared/hotkeys.ts). */
+  hotkeys: Record<HotkeyAction, string>;
   history: {
     enabled: boolean;             // HIST-07: global disable
     // Per-host disable is not here: hosts.history_enabled in hosts.db (§2.2),
     // moved out of this field in document version 1.2.
   };
-  shownCounts: Record<string, number>; // hint id → how many times shown (cap 3)
+  shownCounts: Record<string, number>; // hint id → how many times shown (cap 3, spec §5.1)
   updates: {
     autoCheck: boolean;           // OQ-09
-    source: string;               // update source URL
   };
 }
+
+/** Written by main, the window never sees it — stripped out before handing to the renderer. */
+interface AppState {
+  version: string;
+  /** UI language (CLAUDE.md §5a): default 'ru', fallback 'en'. Written only
+   *  through the language-change channel — never through the regular settings-update path. */
+  language: string;
+  window: {
+    x?: number;
+    y?: number;
+    width: number;
+    height: number;
+    maximized: boolean;           // WIN-01
+  };
+  /** HM-12: keys from the wizard still waiting to be deployed to the server — survives a restart. */
+  pendingKeyDeployments: PendingKeyDeployment[];
+  updates: {
+    source: string;               // update source URL; can't go stale — nothing writes it at runtime
+  };
+}
+
+/** The shape of the file on disk — unchanged by this split. */
+type AppConfig = Settings & AppState;
 ```
 
-config.json **contains no secrets** (SEC-01). `hints.shownCounts` implements the "shown at most 3 times" rule from spec §5.1.
+The `onboarding: { completed: boolean }` field listed in earlier versions of this document has been removed from the code — the welcome screen is shown based on `hosts.length === 0`, there's no separate first-run flag (ADR-0014). config.json **contains no secrets** (SEC-01). `hints.shownCounts` implements the "shown at most 3 times" rule from spec §5.1.
 
 ---
 
 ## 7. IPC contract
+
+> **This section is partially stale.** The `LucidSSHBridge` below is a snapshot of a much earlier version of the app — the real `src/preload/index.ts` has ≈80 methods (i18n, the HM-12 key-generation wizard, PuTTY/WinSCP/ssh-config import, window controls, auth prompts, and more) that aren't listed here; `explainError`/`FallbackRef` doesn't exist as an IPC method at all in the real code (an error explanation only ever arrives via the `onError` event — the detector runs entirely in main). A full rewrite is tracked separately (see the internal ticket referenced from `private/Data_Structures.md`). Only the dashboard method (DASH-09/10) and the `DashboardAlertIssue` type below have been brought current — **the rest is not guaranteed fresh**.
 
 > Every method is one operation. There's no generic `invoke(channel, data)`. All arguments are validated in main (type, format, length, range). `sessionId`/`hostId` are checked for existence and ownership by the window. Secrets are never returned in responses (SEC-05, guide §4).
 
@@ -474,6 +547,9 @@ interface LucidSSHBridge {
   updateHost(id: number, input: HostInput, secret?: string): Promise<void>;
   deleteHost(id: number): Promise<void>;                 // also cleans up Credential Manager
   hostHasSecret(id: number): Promise<boolean>;           // for the "password saved" UI state, no value
+  // DASH-09/10 "Don't show again": a channel about a dashboard finding, not host CRUD
+  // (renamed from config:dismiss-dashboard-alert, ADR-0015).
+  dismissDashboardAlert(hostId: number, issue: DashboardAlertIssue): Promise<void>;
 
   // --- Sessions ---
   connectHost(hostId: number): Promise<{ sessionId: string; status: SessionStatus }>;
@@ -548,6 +624,10 @@ interface HostKeyPrompt {
   isChanged: boolean;          // true → changed, blocked (SSH-04)
   previousFingerprint?: string;
 }
+
+// DASH-09/10: findings for the one-shot health banner after the first successful poll.
+// Dismissed ones live in hosts.db, table host_dismissed_alerts (§2.3, ADR-0015).
+type DashboardAlertIssue = 'cpu' | 'ram' | 'disk' | 'rebootRequired';
 
 type DangerScope = 'file' | 'directory' | 'disk' | 'other';
 
@@ -650,7 +730,7 @@ interface ErrorExplanation {
 interface HistoryQuery {
   text?: string;
   hostId?: number;
-  sessionOnly?: boolean;
+  sessionId?: string; // the "This session" filter — applied in the renderer, by id list
 }
 
 interface UpdateInfo {
@@ -700,7 +780,7 @@ OpenSSH format (`known_hosts`), managed in main. On first connection, an entry i
 1. Secrets (passwords, passphrases, key contents) — Credential Manager only, never in SQLite/JSON/logs/IPC responses (SEC-01, guide §10, §17).
 2. Key paths are stored as a reference to the original; the key is never copied (SEC-02).
 3. Any string coming from the server (stderr, breadcrumb, metrics, man/--help) is untrusted input: parsed as data, never executed, masked for secrets before being saved/logged.
-4. The built-in databases' versions (`errors.json`, `commands.json`) are checked against the app version; their update strategy is OQ-06.
+4. The built-in databases' versions (`errors.core.json`, `commands.core.json`) are checked against the app version; their update strategy is OQ-06.
 5. Extension points for 1.2 (`FallbackRef.kind`, `ErrorExplanation.source`) are in place, but the LLM implementation is absent in 1.0.
 6. Denormalizing `host_name`/`username` into history is intentional: the entry stays readable after the host is deleted.
 
