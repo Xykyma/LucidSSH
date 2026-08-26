@@ -68,7 +68,7 @@ const fakeConfig = (overrides: Partial<AppConfig> = {}): AppConfig =>
     version: '0.0.0',
     language: 'ru',
     ui: { hints: { errorPanel: true } },
-    history: { enabled: true, perHostDisabled: [] },
+    history: { enabled: true },
     ...overrides
   }) as unknown as AppConfig;
 
@@ -80,6 +80,7 @@ const fakeHost = (overrides: Partial<Host> = {}): Host => ({
   username: 'nikita',
   authMethod: 'password',
   guardEnabled: true,
+  historyEnabled: true,
   sortOrder: 0,
   createdAt: '',
   updatedAt: '',
@@ -158,17 +159,15 @@ describe('commandReport — handleCommandFinished', () => {
   });
 
   it('история выключена глобально → запись не производится (HIST-07)', () => {
-    mockLoadConfig.mockReturnValue(fakeConfig({ history: { enabled: false, perHostDisabled: [] } } as Partial<AppConfig>));
+    mockLoadConfig.mockReturnValue(fakeConfig({ history: { enabled: false } } as Partial<AppConfig>));
 
     handleCommandFinished(fakeIdentity(), fakeEvent({ exitCode: 0 }));
 
     expect(mockRecordHistory).not.toHaveBeenCalled();
   });
 
-  it('история выключена для этого хоста → запись не производится (HIST-07)', () => {
-    mockLoadConfig.mockReturnValue(
-      fakeConfig({ history: { enabled: true, perHostDisabled: [1] } } as Partial<AppConfig>)
-    );
+  it('история выключена для этого хоста (hosts.db, ADR-0015) → запись не производится (HIST-07)', () => {
+    mockGetHost.mockReturnValue(fakeHost({ historyEnabled: false }));
 
     handleCommandFinished(fakeIdentity({ hostId: 1 }), fakeEvent({ exitCode: 0 }));
 

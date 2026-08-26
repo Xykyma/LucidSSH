@@ -130,8 +130,10 @@ export function recordCommand(
 ): void {
   const cfg = loadConfig();
   if (!cfg.history.enabled) return;
-  if (cfg.history.perHostDisabled.includes(session.hostId)) return;
   const host = getHost(session.hostId);
+  // HIST-07: флаг хоста переживает удаление вместе со строкой (hosts.db, ADR-0015).
+  // Quick Connect (host === null, HM-11) не участвует — история пишется, как раньше.
+  if (host && !host.historyEnabled) return;
   recordHistory({
     command,
     hostId: session.hostId,

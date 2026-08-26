@@ -42,8 +42,10 @@ export function DashboardHealthBanner({
   alert: DashboardAlert;
   metrics: DashboardMetrics | undefined;
   onClose: () => void;
-  /** «Больше не показывать» для одной находки — не ждёт следующего reconnect (DASH-09). */
-  onDismissIssue: (issue: DashboardAlertIssue) => void;
+  /** «Больше не показывать» для одной находки — не ждёт следующего reconnect
+   *  (DASH-09). undefined — Quick Connect (HM-11): персистентной настройке
+   *  негде жить у сессии без хоста, кнопка скрывается, крестик остаётся. */
+  onDismissIssue: ((issue: DashboardAlertIssue) => void) | undefined;
 }): JSX.Element {
   const { t } = useTranslation();
   return (
@@ -58,13 +60,15 @@ export function DashboardHealthBanner({
         {alert.issues.map((issue) => (
           <li key={issue} className="flex items-center gap-2">
             <span className="min-w-0 flex-1">{issueText(t, issue, metrics)}</span>
-            <button
-              type="button"
-              onClick={() => onDismissIssue(issue)}
-              className="shrink-0 text-[11.5px] text-text-muted underline hover:text-text-strong"
-            >
-              {t('dashboard.healthBanner.dismissIssue')}
-            </button>
+            {onDismissIssue && (
+              <button
+                type="button"
+                onClick={() => onDismissIssue(issue)}
+                className="shrink-0 text-[11.5px] text-text-muted underline hover:text-text-strong"
+              >
+                {t('dashboard.healthBanner.dismissIssue')}
+              </button>
+            )}
           </li>
         ))}
       </ul>

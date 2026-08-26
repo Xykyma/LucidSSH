@@ -120,7 +120,7 @@ describe('resetConfig (SET-08)', () => {
     expect(fresh.hotkeys).toEqual(DEFAULT_HOTKEYS);
   });
 
-  it('не теряет pendingKeyDeployments, geometрию окна и dismissedAlerts дашборда (ADR-0014)', async () => {
+  it('не теряет pendingKeyDeployments и геометрию окна (ADR-0014)', async () => {
     const { loadConfig, updateConfig, resetConfig } = await freshStore();
     loadConfig();
     updateConfig((cfg) => {
@@ -128,14 +128,12 @@ describe('resetConfig (SET-08)', () => {
         { keyPath: 'C:\\Users\\u\\.ssh\\id_ed25519_web', publicKey: 'ssh-ed25519 AAAA' }
       ];
       cfg.window = { width: 999, height: 555, maximized: true };
-      cfg.dashboard.dismissedAlerts[3] = ['cpu'];
     });
     const fresh = resetConfig();
     expect(fresh.pendingKeyDeployments).toEqual([
       { keyPath: 'C:\\Users\\u\\.ssh\\id_ed25519_web', publicKey: 'ssh-ed25519 AAAA' }
     ]);
     expect(fresh.window).toEqual({ width: 999, height: 555, maximized: true });
-    expect(fresh.dashboard.dismissedAlerts).toEqual({ 3: ['cpu'] });
   });
 
   it('возвращает Настройки к дефолтам', async () => {

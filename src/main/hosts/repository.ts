@@ -18,6 +18,7 @@ interface HostRow {
   proxy_jump_host_id: number | null;
   note: string | null;
   guard_enabled: number;
+  history_enabled: number;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -44,6 +45,7 @@ function rowToHost(r: HostRow): Host {
     proxyJumpHostId: r.proxy_jump_host_id ?? undefined,
     note: r.note ?? undefined,
     guardEnabled: r.guard_enabled === 1,
+    historyEnabled: r.history_enabled === 1,
     sortOrder: r.sort_order,
     createdAt: r.created_at,
     updatedAt: r.updated_at
@@ -81,9 +83,9 @@ export function createHost(input: HostInput): number {
   const res = openHostsDb()
     .prepare(
       `INSERT INTO hosts (name, address, port, username, auth_method, key_path,
-         group_id, proxy_jump_host_id, note, guard_enabled, sort_order, created_at, updated_at)
+         group_id, proxy_jump_host_id, note, guard_enabled, history_enabled, sort_order, created_at, updated_at)
        VALUES (@name, @address, @port, @username, @authMethod, @keyPath,
-         @groupId, @proxyJumpHostId, @note, @guardEnabled, @sortOrder, @createdAt, @updatedAt)`
+         @groupId, @proxyJumpHostId, @note, @guardEnabled, @historyEnabled, @sortOrder, @createdAt, @updatedAt)`
     )
     .run({
       name: input.name,
@@ -96,6 +98,7 @@ export function createHost(input: HostInput): number {
       proxyJumpHostId: input.proxyJumpHostId ?? null,
       note: input.note ?? null,
       guardEnabled: input.guardEnabled ? 1 : 0,
+      historyEnabled: input.historyEnabled ? 1 : 0,
       sortOrder: 0,
       createdAt: now,
       updatedAt: now
@@ -108,7 +111,8 @@ export function updateHost(id: number, input: HostInput): void {
     .prepare(
       `UPDATE hosts SET name=@name, address=@address, port=@port, username=@username,
          auth_method=@authMethod, key_path=@keyPath, group_id=@groupId,
-         proxy_jump_host_id=@proxyJumpHostId, note=@note, guard_enabled=@guardEnabled, updated_at=@updatedAt
+         proxy_jump_host_id=@proxyJumpHostId, note=@note, guard_enabled=@guardEnabled,
+         history_enabled=@historyEnabled, updated_at=@updatedAt
        WHERE id=@id`
     )
     .run({
@@ -123,6 +127,7 @@ export function updateHost(id: number, input: HostInput): void {
       proxyJumpHostId: input.proxyJumpHostId ?? null,
       note: input.note ?? null,
       guardEnabled: input.guardEnabled ? 1 : 0,
+      historyEnabled: input.historyEnabled ? 1 : 0,
       updatedAt: new Date().toISOString()
     });
 }

@@ -354,10 +354,16 @@ export function TerminalArea(): JSX.Element {
           alert={activeExtras.dashboardAlert}
           metrics={activeExtras.dashboard}
           onClose={() => dismissDashboardAlert(active.sessionId)}
-          onDismissIssue={(issue) => {
-            void window.lucidSSH.dismissDashboardAlert(active.hostId, issue);
-            dismissDashboardAlertIssue(active.sessionId, issue);
-          }}
+          // HM-11: у Quick Connect (hostId=0) нет строки в hosts.db — персистентная
+          // «Больше не показывать» здесь не может жить (.scratch/host-scoped-flags-to-db).
+          onDismissIssue={
+            active.hostId !== 0
+              ? (issue) => {
+                  void window.lucidSSH.dismissDashboardAlert(active.hostId, issue);
+                  dismissDashboardAlertIssue(active.sessionId, issue);
+                }
+              : undefined
+          }
         />
       )}
       {active && dashboardModalOpen && (

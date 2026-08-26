@@ -50,11 +50,7 @@ export function createDefaultConfig(appVersion: string): AppConfig {
     },
     hotkeys: { ...DEFAULT_HOTKEYS },
     history: {
-      enabled: true,
-      perHostDisabled: []
-    },
-    dashboard: {
-      dismissedAlerts: {}
+      enabled: true
     },
     shownCounts: {},
     pendingKeyDeployments: [],

@@ -68,8 +68,6 @@ const api = {
   resetConfig: (): Promise<Settings> => ipcRenderer.invoke(IPC.configReset),
   markHint: (hintId: string): Promise<Settings> => ipcRenderer.invoke(IPC.configMarkHint, hintId),
   resetHintCounters: (): Promise<Settings> => ipcRenderer.invoke(IPC.configResetHints),
-  dismissDashboardAlert: (hostId: number, issue: DashboardAlertIssue): Promise<void> =>
-    ipcRenderer.invoke(IPC.configDismissDashboardAlert, hostId, issue),
   listKnownHosts: (): Promise<KnownHostView[]> => ipcRenderer.invoke(IPC.knownHostsList),
   deleteKnownHost: (line: number): Promise<void> => ipcRenderer.invoke(IPC.knownHostsDelete, line),
 
@@ -108,6 +106,9 @@ const api = {
   setGroupCollapsed: (id: number, collapsed: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC.groupSetCollapsed, id, collapsed),
   deleteGroup: (id: number): Promise<void> => ipcRenderer.invoke(IPC.groupDelete, id),
+  // DASH-09 «Больше не показывать»: канал про находку дашборда, не CRUD хоста.
+  dismissDashboardAlert: (hostId: number, issue: DashboardAlertIssue): Promise<void> =>
+    ipcRenderer.invoke(IPC.dashboardDismissAlert, hostId, issue),
 
   // --- Мастер создания SSH-ключа (HM-12) ---
   keygenAvailable: (): Promise<boolean> => ipcRenderer.invoke(IPC.keygenAvailable),

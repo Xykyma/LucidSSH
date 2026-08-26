@@ -85,6 +85,11 @@ export function validateHostInput(raw: unknown): HostInput {
     throw new IpcValidationError('guardEnabled: boolean expected');
   }
 
+  const historyEnabled = r['historyEnabled'];
+  if (typeof historyEnabled !== 'boolean') {
+    throw new IpcValidationError('historyEnabled: boolean expected');
+  }
+
   return {
     name,
     address,
@@ -95,7 +100,8 @@ export function validateHostInput(raw: unknown): HostInput {
     groupId,
     proxyJumpHostId,
     note,
-    guardEnabled
+    guardEnabled,
+    historyEnabled
   };
 }
 

@@ -66,6 +66,7 @@ const host: Host = {
   keyPath: 'C:\\keys\\id_ed25519',
   groupId: 5,
   guardEnabled: true,
+  historyEnabled: true,
   sortOrder: 0,
   createdAt: '2026-07-01T00:00:00Z',
   updatedAt: '2026-07-01T00:00:00Z'

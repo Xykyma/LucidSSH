@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { DashboardAlertIssue } from '@shared/dashboard';
 import { mergeWithDefaults } from './merge';
 
 const defaults = {
   version: '1.0.0',
   language: 'ru',
   window: { width: 1280, height: 800, maximized: false },
-  history: { enabled: true, perHostDisabled: [] as number[] },
-  dashboard: { dismissedAlerts: {} as Record<number, DashboardAlertIssue[]> },
+  history: { enabled: true },
   shownCounts: {} as Record<string, number>,
   pendingKeyDeployments: [] as Array<{ keyPath: string; publicKey: string }>,
   hotkeys: { quickConnect: 'Ctrl+K', openCatalog: 'Ctrl+Shift+L' }
@@ -38,12 +36,11 @@ describe('mergeWithDefaults', () => {
     const merged = mergeWithDefaults(defaults, {
       language: 42,
       window: { width: 'wide' },
-      history: { enabled: 'yes', perHostDisabled: [1, 2] }
+      history: { enabled: 'yes' }
     });
     expect(merged.language).toBe('ru');
     expect(merged.window.width).toBe(1280);
     expect(merged.history.enabled).toBe(true);
-    expect(merged.history.perHostDisabled).toEqual([1, 2]);
   });
 
   it('в shownCounts принимает только числовые значения', () => {
@@ -64,27 +61,6 @@ describe('mergeWithDefaults', () => {
   it('pendingKeyDeployments игнорируется целиком, если сохранённое значение не массив', () => {
     const merged = mergeWithDefaults(defaults, { pendingKeyDeployments: 'garbage' });
     expect(merged.pendingKeyDeployments).toEqual([]);
-  });
-
-  it('dashboard.dismissedAlerts (DASH-09) сохраняет валидные записи по id хоста', () => {
-    const merged = mergeWithDefaults(defaults, {
-      dashboard: { dismissedAlerts: { 3: ['cpu', 'rebootRequired'] } }
-    });
-    expect(merged.dashboard.dismissedAlerts).toEqual({ 3: ['cpu', 'rebootRequired'] });
-  });
-
-  it('dashboard.dismissedAlerts отбрасывает неизвестные issue и нечисловые id хостов', () => {
-    const merged = mergeWithDefaults(defaults, {
-      dashboard: { dismissedAlerts: { 3: ['cpu', 'evil'], notANumber: ['ram'] } }
-    });
-    expect(merged.dashboard.dismissedAlerts).toEqual({ 3: ['cpu'] });
-  });
-
-  it('dashboard отсутствует или повреждён — пустой словарь, приложение не падает', () => {
-    expect(mergeWithDefaults(defaults, { dashboard: 'garbage' }).dashboard).toEqual({
-      dismissedAlerts: {}
-    });
-    expect(mergeWithDefaults(defaults, {}).dashboard).toEqual({ dismissedAlerts: {} });
   });
 
   it('hotkeys (SET-10): без сохранённых оверрайдов — заводские значения по всем действиям', () => {

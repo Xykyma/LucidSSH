@@ -13,7 +13,8 @@ const valid = {
   port: 22,
   username: 'root',
   authMethod: 'password',
-  guardEnabled: true
+  guardEnabled: true,
+  historyEnabled: true
 };
 
 describe('validateHostInput', () => {

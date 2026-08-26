@@ -2,7 +2,9 @@ import { dialog, ipcMain, shell } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import { IPC } from '@shared/ipc';
 import type { Host, HostGroup, ImportPreview } from '@shared/hosts';
+import { DASHBOARD_ALERT_ISSUES, type DashboardAlertIssue } from '@shared/dashboard';
 import * as repo from '../hosts/repository';
+import { addDismissedAlert } from '../hosts/dashboardMutes';
 import * as keychain from '../keychain';
 import { keyFileExists } from '../hosts/keyFile';
 import { applyPassphrase, clearPendingDeployment, findSshKeygen, generateKeyPair } from '../ssh/keygen';
@@ -28,7 +30,6 @@ import type { ExternalImportApplyResult, ExternalImportResult, ImportedHost } fr
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getMainWindow } from '../window/mainWindow';
-import { updateConfig } from '../config/store';
 import { assertSenderIsMainWindow, IpcValidationError } from './validate';
 import { t } from '../i18n';
 
@@ -126,12 +127,12 @@ export function registerHostIpcHandlers(): void {
         if (dependents.length > 0) return { deleted: false, dependents };
       }
       const host = repo.getHost(id);
+      // Каскад (history_enabled со строкой хоста, host_dismissed_alerts через
+      // ON DELETE CASCADE) берёт на себя СУБД — hosts.db, foreign_keys=ON
+      // (.scratch/host-scoped-flags-to-db).
       repo.deleteHost(id);
       // Секрет удаляется вместе с хостом (§10 гайда)
       await keychain.deleteSecret(id);
-      updateConfig((cfg) => {
-        cfg.history.perHostDisabled = cfg.history.perHostDisabled.filter((h) => h !== id);
-      });
       // HM-12: незачем хранить в config.json ожидающий ключ удалённого хоста
       if (host?.keyPath) clearPendingDeployment(host.keyPath);
       return { deleted: true };
@@ -366,6 +367,27 @@ export function registerHostIpcHandlers(): void {
     assertSenderIsMainWindow(event);
     return countPuttySessions();
   });
+
+  // DASH-09: «Больше не показывать» для конкретной находки на конкретном хосте —
+  // health-баннер main-процесса сверяется со списком мьютов перед отправкой
+  // (ssh/dashboard.ts). Возвращает void, не Host: dismissedAlerts — Внутреннее
+  // состояние (ADR-0014), окно его не видит.
+  ipcMain.handle(
+    IPC.dashboardDismissAlert,
+    (event, rawHostId: unknown, rawIssue: unknown): void => {
+      assertSenderIsMainWindow(event);
+      const hostId = validateId(rawHostId, 'hostId');
+      if (!(DASHBOARD_ALERT_ISSUES as readonly string[]).includes(rawIssue as string)) {
+        throw new IpcValidationError('issue: unknown');
+      }
+      // Хост мог исчезнуть между открытием баннера и кликом «Больше не
+      // показывать» (host_dismissed_alerts.host_id — настоящий FK, не JSON-
+      // словарь без проверок, как раньше) — тихий no-op, баннер и так уже
+      // закрылся локально в renderer.
+      if (!repo.getHost(hostId)) return;
+      addDismissedAlert(hostId, rawIssue as DashboardAlertIssue);
+    }
+  );
 }
 
 /** Валидация запроса генерации ключа (HM-12): поля формы хоста могут быть

@@ -37,6 +37,11 @@ interface ExportedHost {
   proxyJump?: string;
   note?: string;
   guardEnabled: boolean;
+  /** HIST-07. Терпимое чтение с дефолтом true на импорте — старые файлы
+   *  (EXPORT_VERSION 1, без этого поля) читаются и новой сборкой, и старая
+   *  сборка молча игнорирует поле, которого не знает: EXPORT_VERSION не
+   *  поднимается (.scratch/host-scoped-flags-to-db). */
+  historyEnabled: boolean;
 }
 
 export interface HostsExportFile {
@@ -67,7 +72,8 @@ export function buildExport(hosts: Host[], groups: HostGroup[]): HostsExportFile
       proxyJump:
         h.proxyJumpHostId !== undefined ? hostById.get(h.proxyJumpHostId)?.name : undefined,
       note: h.note,
-      guardEnabled: h.guardEnabled
+      guardEnabled: h.guardEnabled,
+      historyEnabled: h.historyEnabled
     }))
   };
 }
@@ -131,7 +137,8 @@ export function parseImportFile(json: string): { hosts: HostInput[]; groups: str
       authMethod: rec['authMethod'],
       keyPath: rec['keyPath'],
       note: rec['note'],
-      guardEnabled: typeof rec['guardEnabled'] === 'boolean' ? rec['guardEnabled'] : true
+      guardEnabled: typeof rec['guardEnabled'] === 'boolean' ? rec['guardEnabled'] : true,
+      historyEnabled: typeof rec['historyEnabled'] === 'boolean' ? rec['historyEnabled'] : true
     });
     if (groupName) groupNames.add(groupName);
     hostGroupNames.push(groupName);

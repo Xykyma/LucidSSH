@@ -1,5 +1,4 @@
 import type { PendingKeyDeployment } from './keygen';
-import type { DashboardAlertIssue } from './dashboard';
 import type { FixedHotkeyAction, HotkeyAction } from './hotkeys';
 
 /**
@@ -80,16 +79,6 @@ export interface AppState {
   window: WindowState;
   /** HM-12: ключи мастера, ждущие дозаписи на сервер — переживает перезапуск. */
   pendingKeyDeployments: PendingKeyDeployment[];
-  dashboard: {
-    /** DASH-09: «Больше не показывать» — issue не всплывает в health-баннере
-     *  для этого хоста впредь (id хоста → список отклонённых находок). Пишут
-     *  обе стороны (окно жмёт «не показывать», main сам снимает mute при
-     *  self-clearing), но владелец — main. */
-    dismissedAlerts: Record<number, DashboardAlertIssue[]>;
-  };
-  history: {
-    perHostDisabled: number[];
-  };
   updates: {
     source: string;
   };
@@ -124,20 +113,17 @@ export function projectState(cfg: AppConfig): AppState {
     language: cfg.language,
     window: cfg.window,
     pendingKeyDeployments: cfg.pendingKeyDeployments,
-    dashboard: cfg.dashboard,
-    history: { perHostDisabled: cfg.history.perHostDisabled },
     updates: { source: cfg.updates.source }
   };
 }
 
-/** Собирает файл на диске обратно из двух половин (SET-08). `history` и
- *  `updates` разрезаны вложенно — наивный спред одной половины поверх другой
- *  стёр бы соседнее поле того же вложенного объекта. */
+/** Собирает файл на диске обратно из двух половин (SET-08). `updates`
+ *  разрезан вложенно — наивный спред одной половины поверх другой стёр бы
+ *  соседнее поле того же вложенного объекта. */
 export function combineConfig(settings: Settings, state: AppState): AppConfig {
   return {
     ...settings,
     ...state,
-    history: { ...settings.history, ...state.history },
     updates: { ...settings.updates, ...state.updates }
   };
 }

@@ -32,6 +32,7 @@ interface FormState {
   proxyJumpHostId: number | undefined; // SSH-05 тикет 04: выбирается в форме
   secret: string; // пароль или passphrase; не хранится дольше сабмита
   guardEnabled: boolean; // GUARD-05
+  historyEnabled: boolean; // HIST-07
 }
 
 /**
@@ -209,7 +210,8 @@ export function NewConnectionDrawer(): JSX.Element | null {
         groupId: editHost.groupId !== undefined ? String(editHost.groupId) : '',
         proxyJumpHostId: editHost.proxyJumpHostId,
         secret: '',
-        guardEnabled: editHost.guardEnabled
+        guardEnabled: editHost.guardEnabled,
+        historyEnabled: editHost.historyEnabled
       });
       void window.lucidSSH.hostHasSecret(editHost.id).then(setHasSavedSecret);
     } else {
@@ -224,7 +226,8 @@ export function NewConnectionDrawer(): JSX.Element | null {
         groupId: drawer.presetGroupId !== undefined ? String(drawer.presetGroupId) : '',
         proxyJumpHostId: undefined,
         secret: '',
-        guardEnabled: true
+        guardEnabled: true,
+        historyEnabled: true
       });
     }
   }, [drawer.open, editHost, drawer.presetGroupId, drawer.presetQuickConnect]);
@@ -275,6 +278,7 @@ export function NewConnectionDrawer(): JSX.Element | null {
     keyPath: form.authMethod === 'key' ? form.keyPath.trim() : undefined,
     groupId: form.groupId !== '' ? Number(form.groupId) : undefined,
     guardEnabled: form.guardEnabled,
+    historyEnabled: form.historyEnabled,
     proxyJumpHostId: form.proxyJumpHostId,
     note: editHost?.note
   });
@@ -589,6 +593,13 @@ export function NewConnectionDrawer(): JSX.Element | null {
             desc={t('conn.guardEnabledDesc')}
             on={form.guardEnabled}
             onChange={(v) => set({ guardEnabled: v })}
+          />
+
+          <ToggleRow
+            title={t('conn.historyEnabled')}
+            desc={t('conn.historyEnabledDesc')}
+            on={form.historyEnabled}
+            onChange={(v) => set({ historyEnabled: v })}
           />
 
           {error && (

@@ -23,9 +23,9 @@ function fallbackUsername(): string {
 }
 
 /**
- * ImportedHost → сырой HostInput для валидации (guardEnabled по умолчанию
- * включён). `h.proxyJump` (сырой алиас из ~/.ssh/config, HM-04) сюда не
- * передаётся — резолв алиаса в proxyJumpHostId происходит отдельно, после
+ * ImportedHost → сырой HostInput для валидации (guardEnabled/historyEnabled по
+ * умолчанию включены). `h.proxyJump` (сырой алиас из ~/.ssh/config, HM-04) сюда
+ * не передаётся — резолв алиаса в proxyJumpHostId происходит отдельно, после
  * того как импортируемые хосты уже записаны в БД (тикет 06, см. ниже).
  */
 function toRawInput(h: ImportedHost, defaultUser: string): Record<string, unknown> {
@@ -37,7 +37,8 @@ function toRawInput(h: ImportedHost, defaultUser: string): Record<string, unknow
     authMethod: h.authMethod,
     keyPath: h.keyPath,
     note: h.note,
-    guardEnabled: true
+    guardEnabled: true,
+    historyEnabled: true
   };
 }
 

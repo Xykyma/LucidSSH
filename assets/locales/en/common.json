@@ -168,6 +168,8 @@
     "jumpHostEmpty": "No matching hosts",
     "guardEnabled": "Dangerous command Guard",
     "guardEnabledDesc": "Check commands on this host before sending them to the server. Only disable if you understand the risk.",
+    "historyEnabled": "Record command history",
+    "historyEnabledDesc": "Commands run on this host are saved to history. Turning this off does not erase history already recorded.",
     "saveError": "Could not save the connection. Check the fields and try again.",
     "test": "Test connection",
     "testing": "Testing…",

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,7 +37,8 @@ const base = {
   port: 22,
   username: 'root',
   authMethod: 'password' as const,
-  guardEnabled: true
+  guardEnabled: true,
+  historyEnabled: true
 };
 
 describe('createHost / getHost / updateHost — proxyJumpHostId', () => {
@@ -262,5 +263,112 @@ describe('миграция v2 — бэкфилл proxy_jump_host_id из ста�
     const repo = await freshRepo();
     const id = repo.createHost({ ...base, name: 'solo' });
     expect(repo.getHost(id)?.proxyJumpHostId).toBeUndefined();
+  });
+});
+
+describe('миграция v3 — history_enabled + перенос dashboard.dismissedAlerts из config.json', () => {
+  /** Готовит "старую" БД по схеме v1+v2 напрямую, до подключения db.ts. */
+  function seedV2Db(): { path: string; existingId: number } {
+    const path = join(dir, 'hosts.db');
+    const raw = new Database(path);
+    raw.exec(`
+      CREATE TABLE groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0, collapsed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE hosts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, address TEXT NOT NULL,
+        port INTEGER NOT NULL DEFAULT 22, username TEXT NOT NULL, auth_method TEXT NOT NULL,
+        key_path TEXT, group_id INTEGER, proxy_jump TEXT,
+        proxy_jump_host_id INTEGER REFERENCES hosts(id) ON DELETE SET NULL, note TEXT,
+        guard_enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+    `);
+    const now = new Date().toISOString();
+    const res = raw
+      .prepare(
+        `INSERT INTO hosts (name, address, port, username, auth_method, guard_enabled, created_at, updated_at)
+         VALUES ('web-01', '203.0.113.10', 22, 'root', 'password', 1, ?, ?)`
+      )
+      .run(now, now);
+    raw.pragma('user_version = 2');
+    raw.close();
+    return { path, existingId: Number(res.lastInsertRowid) };
+  }
+
+  it('history_enabled появляется со значением 1 по умолчанию у существующих строк', async () => {
+    seedV2Db();
+    const repo = await freshRepo();
+    expect(repo.listHosts()[0]?.historyEnabled).toBe(true);
+  });
+
+  it('переносит мьюты существующего хоста, отбрасывает мьюты удалённого', async () => {
+    const { existingId } = seedV2Db();
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({
+        dashboard: {
+          dismissedAlerts: {
+            [existingId]: ['cpu', 'rebootRequired'],
+            9999: ['ram'] // хост давно удалён — накопленный мусор, не переносится
+          }
+        }
+      }),
+      'utf8'
+    );
+
+    await freshRepo();
+    const { listDismissedAlerts } = await import('./dashboardMutes');
+    expect(listDismissedAlerts(existingId).sort()).toEqual(['cpu', 'rebootRequired']);
+    expect(listDismissedAlerts(9999)).toEqual([]);
+  });
+
+  it('отсутствующий config.json — открытие БД не падает, мьютов нет', async () => {
+    seedV2Db();
+    const repo = await freshRepo();
+    expect(repo.listHosts()).toHaveLength(1);
+    const { listDismissedAlerts } = await import('./dashboardMutes');
+    expect(listDismissedAlerts(1)).toEqual([]);
+  });
+
+  it('битый config.json — открытие БД не падает', async () => {
+    seedV2Db();
+    writeFileSync(join(dir, 'config.json'), '{ not valid json', 'utf8');
+    const repo = await freshRepo();
+    expect(repo.listHosts()).toHaveLength(1);
+  });
+
+  it('идемпотентность: повторное открытие БД не дублирует мьюты (PRIMARY KEY)', async () => {
+    const { existingId } = seedV2Db();
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ dashboard: { dismissedAlerts: { [existingId]: ['cpu'] } } }),
+      'utf8'
+    );
+    await freshRepo();
+    const { closeHostsDb } = await import('./db');
+    closeHostsDb();
+    // Второе "открытие" — user_version уже 3, миграция v3 не выполняется повторно.
+    const repo2 = await freshRepo();
+    repo2.listHosts();
+    const { listDismissedAlerts } = await import('./dashboardMutes');
+    expect(listDismissedAlerts(existingId)).toEqual(['cpu']);
+  });
+});
+
+describe('каскад удаления хоста (hosts.db, foreign_keys=ON) — host_dismissed_alerts', () => {
+  it('удаление хоста уносит его мьюты без ручной сборки мусора', async () => {
+    const repo = await freshRepo();
+    const { addDismissedAlert, listDismissedAlerts } = await import('./dashboardMutes');
+    const id = repo.createHost({ ...base, name: 'web-01' });
+    addDismissedAlert(id, 'cpu');
+    addDismissedAlert(id, 'disk');
+    expect(listDismissedAlerts(id).sort()).toEqual(['cpu', 'disk']);
+
+    repo.deleteHost(id);
+
+    expect(listDismissedAlerts(id)).toEqual([]);
   });
 });
