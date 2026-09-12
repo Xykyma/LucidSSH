@@ -432,7 +432,7 @@
       "hostMissing": "Not found among the saved hosts — pick the jump host again in the connection settings",
       "hostSecretMissing": "No saved password for the jump host — connect to it directly once and save the password, or set it in that host's connection settings",
       "selfReference": "The host is set as its own jump host — pick a different jump host in the connection settings",
-      "hostkeyUnknown": "The jump host fingerprint is not confirmed — connect to it directly once to check and save its key, or verify whether the key has changed"
+      "hostkeyUnknown": "Fingerprint not confirmed — connection cancelled"
     },
     "jumpLine": "Jump host · {{text}}"
   },
