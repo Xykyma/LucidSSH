@@ -3,7 +3,7 @@ import type { AppConfig } from '@shared/config';
 import type { Host, HostInput } from '@shared/hosts';
 
 // Ровно тот же принцип изоляции, что и в sessionManager.test.ts: seam ограничен
-// __setClientFactoryForTest, hosts/repository и keychain подменяются напрямую —
+// __setConnectionFactoryForTest, hosts/repository и keychain подменяются напрямую —
 // better-sqlite3/keytar/Electron тестам этого файла не нужны.
 vi.mock('../hosts/repository', () => ({ getHost: vi.fn() }));
 vi.mock('../keychain', () => ({ getSecretForConnection: vi.fn() }));
@@ -31,7 +31,9 @@ import { getSecretForConnection } from '../keychain';
 import { getHost } from '../hosts/repository';
 import { requestHostKeyDecision, type RequestHostKeyDecisionParams } from './hostKeyDecision';
 import { loadPrivateKey } from './keys';
-import { testConnection, __setClientFactoryForTest, type FakeableTestClient } from './testConnection';
+import { testConnection } from './testConnection';
+import { __setConnectionFactoryForTest } from './connection';
+import { makeFakeConnection } from './fakeConnection';
 
 const mockLoadConfig = vi.mocked(loadConfig);
 const mockGetSecretForConnection = vi.mocked(getSecretForConnection);
@@ -77,49 +79,25 @@ const fakeBastion = (overrides: Partial<Host> = {}): Host => ({
   ...overrides
 });
 
-/** Фальшивый ssh2.Client (по образцу sessionManager.test.ts): копит
- *  обработчики on(event, …), позволяет тесту сымитировать события сервера
- *  без сети. `succeed: false` делает forwardOut отказным (bastion запрещает
+/** Фальшивое Соединение (общий `fakeConnection.ts`, PR-2
+ *  `.scratch/open-connection/spec.md`) в форме, которую уже ждут тела тестов
+ *  ниже. `forwardOutFails` делает forwardOut отказным (bastion запрещает
  *  проброс). */
 function makeFakeClient(opts: { forwardOutFails?: boolean } = {}): {
-  client: FakeableTestClient;
+  client: ReturnType<typeof makeFakeConnection>['connection'];
   connect: ReturnType<typeof vi.fn>;
   end: ReturnType<typeof vi.fn>;
   forwardOut: ReturnType<typeof vi.fn>;
-  emit: (event: string, ...args: unknown[]) => void;
+  emit: ReturnType<typeof makeFakeConnection>['emit'];
 } {
-  const handlers = new Map<string, Array<(...args: unknown[]) => void>>();
-  const connect = vi.fn();
-  const end = vi.fn();
-  const forwardOut = vi.fn(
-    (
-      _srcIP: string,
-      _srcPort: number,
-      _dstIP: string,
-      _dstPort: number,
-      cb: (err: Error | undefined, channel: unknown) => void
-    ) => {
-      if (opts.forwardOutFails) cb(new Error('forward denied'), undefined);
-      else cb(undefined, { channel: true });
-    }
-  );
-  const client = {
-    connect,
-    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-      const list = handlers.get(event) ?? [];
-      list.push(handler);
-      handlers.set(event, list);
-      return client;
-    }),
-    forwardOut,
-    end
-  } as unknown as FakeableTestClient;
-
-  const emit = (event: string, ...args: unknown[]): void => {
-    for (const handler of handlers.get(event) ?? []) handler(...args);
+  const { connection, emit } = makeFakeConnection(opts);
+  return {
+    client: connection,
+    connect: vi.mocked(connection.connect),
+    end: vi.mocked(connection.end),
+    forwardOut: vi.mocked(connection.forwardOut),
+    emit
   };
-
-  return { client, connect, end, forwardOut, emit };
 }
 
 describe('testConnection', () => {
@@ -130,12 +108,12 @@ describe('testConnection', () => {
   });
 
   afterEach(() => {
-    __setClientFactoryForTest(null);
+    __setConnectionFactoryForTest(null);
   });
 
   it('без proxyJumpHostId: прямое подключение, ok при ready', async () => {
     const { client, end, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput(), 'pw');
     emit('ready');
@@ -148,7 +126,7 @@ describe('testConnection', () => {
 
   it('без proxyJumpHostId: ошибка аутентификации — обычный errorKey, без step', async () => {
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput(), 'wrong');
     emit('error', Object.assign(new Error('auth'), { level: 'client-authentication' }));
@@ -163,7 +141,7 @@ describe('testConnection', () => {
   // попытку входа с пустым паролем (лишняя запись в MaxAuthTries/fail2ban).
   it('метод password без секрета: пустой пароль не уходит в connect, итог clog.error.auth', async () => {
     const { client, connect, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput(), undefined);
     await vi.waitFor(() => {
@@ -188,7 +166,7 @@ describe('testConnection', () => {
     });
 
     const { client, connect, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput(), 'pw');
     await vi.waitFor(() => {
@@ -214,7 +192,7 @@ describe('testConnection', () => {
     mockGetHost.mockReturnValue(fakeBastion({ authMethod: 'password' }));
     mockGetSecretForConnection.mockResolvedValue(null);
     const factory = vi.fn();
-    __setClientFactoryForTest(factory as unknown as () => FakeableTestClient);
+    __setConnectionFactoryForTest(factory as unknown as () => ReturnType<typeof makeFakeConnection>["connection"]);
 
     const result = await testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
 
@@ -229,7 +207,7 @@ describe('testConnection', () => {
     mockLoadPrivateKey.mockReturnValue(Buffer.from('fake-key'));
 
     const { client, connect, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
     await vi.waitFor(() => {
@@ -249,7 +227,7 @@ describe('testConnection', () => {
     mockGetSecretForConnection.mockResolvedValue('bastion-secret');
 
     const { client, connect, forwardOut, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
     await vi.waitFor(() => {
@@ -267,7 +245,7 @@ describe('testConnection', () => {
   it('proxyJumpHostId ссылается на удалённый хост — ok:false, step "jump", без сети', async () => {
     mockGetHost.mockReturnValue(null);
     const factory = vi.fn();
-    __setClientFactoryForTest(factory as unknown as () => FakeableTestClient);
+    __setConnectionFactoryForTest(factory as unknown as () => ReturnType<typeof makeFakeConnection>["connection"]);
 
     const result = await testConnection(fakeInput({ proxyJumpHostId: 99 }), 'target-secret');
 
@@ -277,7 +255,7 @@ describe('testConnection', () => {
 
   it('proxyJumpHostId указывает на сам редактируемый хост — self-reference, без сети', async () => {
     const factory = vi.fn();
-    __setClientFactoryForTest(factory as unknown as () => FakeableTestClient);
+    __setConnectionFactoryForTest(factory as unknown as () => ReturnType<typeof makeFakeConnection>["connection"]);
 
     const result = await testConnection(fakeInput({ proxyJumpHostId: 3 }), 'target-secret', 3);
 
@@ -292,7 +270,7 @@ describe('testConnection', () => {
     mockRequestHostKeyDecision.mockImplementation(({ verify }) => verify(false));
 
     const { client, connect, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
     await vi.waitFor(() => {
@@ -331,7 +309,7 @@ describe('testConnection', () => {
     });
 
     const { client, connect, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput(), 'pw');
     await vi.waitFor(() => {
@@ -365,7 +343,7 @@ describe('testConnection', () => {
     mockRequestHostKeyDecision.mockImplementation(({ verify }) => verify(false));
 
     const { client, connect, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput(), 'pw');
     await vi.waitFor(() => {
@@ -389,7 +367,7 @@ describe('testConnection', () => {
     const jump = makeFakeClient();
     const target = makeFakeClient();
     const clients = [jump.client, target.client];
-    __setClientFactoryForTest(() => clients.shift() as FakeableTestClient);
+    __setConnectionFactoryForTest(() => clients.shift() as ReturnType<typeof makeFakeConnection>["connection"]);
 
     const promise = testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
     await vi.waitFor(() => {
@@ -422,7 +400,7 @@ describe('testConnection', () => {
     const jump = makeFakeClient();
     const target = makeFakeClient();
     const clients = [jump.client, target.client];
-    __setClientFactoryForTest(() => clients.shift() as FakeableTestClient);
+    __setConnectionFactoryForTest(() => clients.shift() as ReturnType<typeof makeFakeConnection>["connection"]);
 
     const promise = testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
 
@@ -452,7 +430,7 @@ describe('testConnection', () => {
     mockGetSecretForConnection.mockResolvedValue('bastion-secret');
 
     const { client, connect, end, emit } = makeFakeClient({ forwardOutFails: true });
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const promise = testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
     await vi.waitFor(() => {
@@ -472,7 +450,7 @@ describe('testConnection', () => {
     const jump = makeFakeClient();
     const target = makeFakeClient();
     const clients = [jump.client, target.client];
-    __setClientFactoryForTest(() => clients.shift() as FakeableTestClient);
+    __setConnectionFactoryForTest(() => clients.shift() as ReturnType<typeof makeFakeConnection>["connection"]);
 
     const promise = testConnection(fakeInput({ proxyJumpHostId: 7 }), 'target-secret');
 
@@ -492,7 +470,9 @@ describe('testConnection', () => {
     expect(jump.end).toHaveBeenCalledTimes(1);
     expect(target.end).toHaveBeenCalledTimes(1);
     // connect() целевого Client получил sock от forwardOut, а не прямой TCP.
+    // { tunnel: 1 } — общий фейк (fakeConnection.ts) считает туннели, как и
+    // в sessionManager.test.ts, вместо прежнего статического { channel: true }.
     const targetConfig = target.connect.mock.calls[0]?.[0] as { sock?: unknown };
-    expect(targetConfig.sock).toEqual({ channel: true });
+    expect(targetConfig.sock).toEqual({ tunnel: 1 });
   });
 });

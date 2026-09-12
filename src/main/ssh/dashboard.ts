@@ -1,5 +1,5 @@
-import type { Client } from 'ssh2';
 import { IPC } from '@shared/ipc';
+import type { Connection } from './connection';
 import {
   DASH_RED_THRESHOLD_PERCENT,
   EMPTY_METRICS,
@@ -76,7 +76,7 @@ const REBOOT_CHECK_COMMAND = '; [ -f /var/run/reboot-required ] && echo "REBOOT 
 
 interface DashboardState {
   timer: NodeJS.Timeout;
-  client: Client;
+  client: Pick<Connection, 'exec'>;
   hostId: number;
   running: boolean;
   logger: DashboardLogger;
@@ -266,7 +266,7 @@ function poll(sessionId: string): void {
 
 export function startDashboard(
   sessionId: string,
-  client: Client,
+  client: Pick<Connection, 'exec'>,
   hostId: number,
   logger: DashboardLogger
 ): void {

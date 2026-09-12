@@ -1,12 +1,10 @@
-import { Buffer } from 'node:buffer';
-import { Client, type ClientChannel } from 'ssh2';
+import type { ClientChannel } from 'ssh2';
 import type { AuthMethod, HostInput } from '@shared/hosts';
 import type { TestConnectionResult } from '@shared/ssh';
-import { loadConfig } from '../config/store';
 import { loadPrivateKey, PrivateKeyError } from './keys';
 import { getHost } from '../hosts/repository';
 import { getSecretForConnection } from '../keychain';
-import { requestHostKeyDecision, HOSTKEY_DECISION_TIMEOUT_MS } from './hostKeyDecision';
+import { openConnection, type Connection, type ConnectionCredentials } from './connection';
 import { forwardOut } from './forwardOut';
 
 /**
@@ -36,13 +34,20 @@ import { forwardOut } from './forwardOut';
  * только для проверки self-reference (см. sessionManager.ts —
  * `establishJumpTunnel`, тот же случай: миграция v2 могла резолвнуть старый
  * текстовый `proxy_jump` на имя самого хоста).
+ *
+ * Одно Соединение до `ready` (базовый конфиг, перевод err.level, hostVerifier,
+ * keyboard-interactive, пустой пароль) — теперь общий с `sessionManager.ts`
+ * модуль `connection.ts` (ADR-0017, `.scratch/open-connection/spec.md` PR-2).
+ * Здесь остаётся только оркестрация двух хопов и разбор `outcome` в
+ * `errorKey`/`step` для формы — перевод причины у двух вызывающих законно
+ * разный (решение 5 спеки).
  */
 export async function testConnection(
   input: HostInput,
   secret: string | undefined,
   hostId?: number
 ): Promise<TestConnectionResult> {
-  let jumpClient: Client | undefined;
+  let jumpConnection: Connection | undefined;
   let sock: ClientChannel | undefined;
 
   if (input.proxyJumpHostId !== undefined) {
@@ -72,27 +77,33 @@ export async function testConnection(
       return { ok: false, errorKey: 'clog.jump.hostSecretMissing', step: 'jump' };
     }
 
-    const jumpResult = await connectOnce(bastion, {
-      secret: bastionSecret,
-      role: 'jump'
-    });
+    const bastionCredentials = resolveCredentials(bastion, bastionSecret);
+    if (!bastionCredentials.ok) return { ok: false, errorKey: bastionCredentials.errorKey, step: 'jump' };
+
+    const jumpResult = await connectOnce(bastion, bastionCredentials.credentials, 'jump');
     if (!jumpResult.ok) return { ok: false, errorKey: jumpResult.errorKey, step: 'jump' };
-    jumpClient = jumpResult.client;
+    jumpConnection = jumpResult.connection;
 
     try {
-      sock = await forwardOut(jumpClient, input.address, input.port);
+      sock = await forwardOut(jumpConnection, input.address, input.port);
     } catch {
       // Типичная причина — bastion запрещает проброс (AllowTcpForwarding no)
       // или целевой хост недоступен уже из его сети (см. sessionManager.ts).
-      jumpClient.end();
+      jumpConnection.end();
       return { ok: false, errorKey: 'clog.jump.tunnelFailed', step: 'jump' };
     }
   }
 
-  const targetResult = await connectOnce(input, { secret, sock, role: 'target' });
-  jumpClient?.end();
+  const targetCredentials = resolveCredentials(input, secret);
+  if (!targetCredentials.ok) {
+    jumpConnection?.end();
+    return { ok: false, errorKey: targetCredentials.errorKey };
+  }
+
+  const targetResult = await connectOnce(input, targetCredentials.credentials, 'target', sock);
+  jumpConnection?.end();
   if (!targetResult.ok) return { ok: false, errorKey: targetResult.errorKey };
-  targetResult.client.end();
+  targetResult.connection.end();
   return { ok: true };
 }
 
@@ -108,172 +119,54 @@ interface ConnectTarget {
   keyPath?: string;
 }
 
-type ConnectOnceResult = { ok: true; client: Client } | { ok: false; errorKey: string };
+type ResolvedCredentials =
+  | { ok: true; credentials: ConnectionCredentials }
+  | { ok: false; errorKey: string };
 
-/** Чем один хоп цепочки отличается от другого: свой секрет, транспорт (готовый
- *  канал у целевого хоста, прямой TCP у bastion) и роль — какой errorKey и
- *  `step` использовать при отказе по отпечатку (см. connectOnce). */
-interface HopOptions {
-  secret: string | undefined;
-  /** Канал через bastion — для целевого хоста цепочки. */
-  sock?: ClientChannel;
-  role: 'target' | 'jump';
-}
-
-/** Один хоп тестового подключения: ready/error/close → результат, без побочных
- *  эффектов на known_hosts. При успехе оставляет `Client` открытым — вызывающая
- *  сторона либо использует его как транспорт для forwardOut (bastion), либо
- *  закрывает (целевой хост, тест окончен). */
-function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOnceResult> {
-  const { secret, sock } = opts;
-  return new Promise((resolve) => {
-    let privateKey: Buffer | undefined;
-    if (target.authMethod === 'key') {
-      try {
-        privateKey = loadPrivateKey(target.keyPath ?? '', secret ?? undefined);
-      } catch (err) {
-        const reason = err instanceof PrivateKeyError ? err.reason : 'unparsable';
-        resolve({ ok: false, errorKey: `clog.keyError.${reason}` });
-        return;
-      }
-    }
-
-    const cfg = loadConfig();
-    const client = clientFactory() as unknown as Client;
-    let settled = false;
-    const settle = (r: ConnectOnceResult): void => {
-      if (settled) return;
-      settled = true;
-      // Успех оставляет client открытым — вызывающая сторона либо использует
-      // его как транспорт (bastion), либо закрывает сама (target). Провал
-      // закрываем здесь: больше некому.
-      if (!r.ok) {
-        try {
-          client.end();
-        } catch {
-          /* уже закрыт */
-        }
-      }
-      resolve(r);
-    };
-
-    // Серверы с keyboard-interactive auth (без password auth) требуют tryKeyboard
-    // и обработчик — см. sessionManager.ts.
-    client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
-      const answer = target.authMethod === 'password' ? (secret ?? '') : '';
-      finish(prompts.map(() => answer));
-    });
-
-    // Отказ по отпечатку ssh2 сообщает обычной ошибкой соединения — без этого
-    // флага он был бы неотличим от «сервер недоступен», и пользователь чинил бы
-    // сеть вместо того, чтобы подтвердить ключ (SSH-03/04).
-    let hostKeyRejected = false;
-    const hostKeyRejectedErrorKey = opts.role === 'jump' ? 'clog.jump.hostkeyUnknown' : 'clog.error.hostkeyRejected';
-    // Этот Client уже закрыт (например, вызывающая сторона отказалась от
-    // попытки раньше решения по ключу) — запоздалый verify до ssh2 доводить
-    // незачем: сокет мёртв, а решение по ключу (accept/reject) применяется
-    // независимо от этого Client (см. spec PR-1).
-    let closed = false;
-
-    client.on('ready', () => settle({ ok: true, client }));
-    client.on('error', (err: Error & { level?: string }) => {
-      if (hostKeyRejected) {
-        settle({ ok: false, errorKey: hostKeyRejectedErrorKey });
-        return;
-      }
-      const category =
-        err.level === 'client-authentication'
-          ? 'auth'
-          : err.level === 'client-timeout'
-            ? 'timeout'
-            : 'socket';
-      settle({ ok: false, errorKey: `clog.error.${category}` });
-    });
-    client.on('close', () => {
-      closed = true;
-      settle({
-        ok: false,
-        errorKey: hostKeyRejected ? hostKeyRejectedErrorKey : 'clog.error.socket'
-      });
-    });
-
-    const connectConfig: Parameters<Client['connect']>[0] = {
-      host: target.address,
-      port: target.port,
-      username: target.username,
-      // readyTimeout охватывает весь путь до 'ready', включая ожидание решения
-      // пользователя по fingerprint в hostVerifier (см. sessionManager.ts) —
-      // без этого слагаемого честная сверка отпечатка роняла бы тест таймаутом.
-      readyTimeout: cfg.connection.connectTimeoutSec * 1000 + HOSTKEY_DECISION_TIMEOUT_MS,
-      // Как в sessionManager.ts (решение 7 спеки) — тест не мешает: таймер
-      // стартует на USERAUTH_SUCCESS, а после ready клиент сразу зовёт end().
-      keepaliveInterval: cfg.connection.keepaliveIntervalSec * 1000,
-      keepaliveCountMax: 3,
-      tryKeyboard: true,
-      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
-        requestHostKeyDecision({
-          hostName: target.name,
-          address: target.address,
-          port: target.port,
-          rawKey: key,
-          purpose: 'test',
-          verify: (valid) => {
-            if (!valid) hostKeyRejected = true;
-            // Client уже закрыт (см. объявление closed выше) — решение
-            // по ключу применяется независимо (known_hosts), но в мёртвый
-            // ssh2-хендшейк его не передаём.
-            if (closed) return;
-            verify(valid);
-          }
-        });
-      }
-    };
-    if (sock) connectConfig.sock = sock;
-    if (target.authMethod === 'password') {
-      if (secret) connectConfig.password = secret;
-    } else {
-      connectConfig.privateKey = privateKey;
-      if (secret) connectConfig.passphrase = secret;
-    }
-
+/** Читает приватный ключ (если метод входа — ключ) и переводит секрет в
+ *  `ConnectionCredentials` для `connection.ts`. Вынесено сюда из `connectOnce`
+ *  (решение 6 спеки PR-2) — чтение ключа законно разное у сессии (цикл с
+ *  passphrase) и теста (одна попытка), `connection.ts` принимает уже
+ *  решённые креды. */
+function resolveCredentials(target: ConnectTarget, secret: string | undefined): ResolvedCredentials {
+  if (target.authMethod === 'key') {
     try {
-      client.connect(connectConfig);
-    } catch {
-      settle({ ok: false, errorKey: 'clog.error.socket' });
+      const privateKey = loadPrivateKey(target.keyPath ?? '', secret ?? undefined);
+      return { ok: true, credentials: { kind: 'key', privateKey, passphrase: secret ?? undefined } };
+    } catch (err) {
+      const reason = err instanceof PrivateKeyError ? err.reason : 'unparsable';
+      return { ok: false, errorKey: `clog.keyError.${reason}` };
     }
+  }
+  return { ok: true, credentials: { kind: 'password', password: secret ?? '' } };
+}
+
+type ConnectOnceResult = { ok: true; connection: Connection } | { ok: false; errorKey: string };
+
+/** Один хоп тестового подключения: делегирует `connection.ts` и переводит его
+ *  `outcome` в `errorKey`, законный для формы (bastion — `clog.jump.hostkeyUnknown`,
+ *  целевой хост — `clog.error.hostkeyRejected`, решение 5 спеки). При успехе
+ *  оставляет Соединение открытым — вызывающая сторона либо использует его как
+ *  транспорт для forwardOut (bastion), либо закрывает (целевой хост, тест
+ *  окончен); закрывать на провале не нужно — `outcome` разрешается только на
+ *  `close`, Соединение уже мертво. */
+function connectOnce(
+  target: ConnectTarget,
+  credentials: ConnectionCredentials,
+  role: 'target' | 'jump',
+  sock?: ClientChannel
+): Promise<ConnectOnceResult> {
+  const hostKeyRejectedErrorKey = role === 'jump' ? 'clog.jump.hostkeyUnknown' : 'clog.error.hostkeyRejected';
+
+  const { connection, outcome } = openConnection(
+    { name: target.name, address: target.address, port: target.port, username: target.username },
+    credentials,
+    { purpose: 'test', sock }
+  );
+
+  return outcome.then((result) => {
+    if (result.ok) return { ok: true, connection };
+    if (result.reason === 'hostkey-rejected') return { ok: false, errorKey: hostKeyRejectedErrorKey };
+    return { ok: false, errorKey: `clog.error.${result.reason}` };
   });
-}
-
-// ---------------------------------------------------------------------------
-// Transport seam — по образцу __setClientFactoryForTest в sessionManager.ts:
-// тестам не нужен настоящий SSH-сервер, чтобы проверить обе попытки цепочки
-// (bastion + target) по отдельности.
-// ---------------------------------------------------------------------------
-
-type ClientEventMap = {
-  'keyboard-interactive': (
-    name: string,
-    instructions: string,
-    lang: string,
-    prompts: Array<{ prompt: string; echo: boolean }>,
-    finish: (answers: string[]) => void
-  ) => void;
-  ready: () => void;
-  error: (err: Error & { level?: string }) => void;
-  close: () => void;
-};
-
-export interface FakeableTestClient {
-  connect(config: Parameters<Client['connect']>[0]): void;
-  on<E extends keyof ClientEventMap>(event: E, handler: ClientEventMap[E]): unknown;
-  forwardOut: Client['forwardOut'];
-  end(): void;
-}
-
-let clientFactory: () => FakeableTestClient = () => new Client() as unknown as FakeableTestClient;
-
-/** Тестовый рычаг: подменить фабрику Client фальшивым дублёром или сбросить к
- *  настоящему ssh2.Client. */
-export function __setClientFactoryForTest(factory: (() => FakeableTestClient) | null): void {
-  clientFactory = factory ?? (() => new Client() as unknown as FakeableTestClient);
 }
