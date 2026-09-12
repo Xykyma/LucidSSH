@@ -48,11 +48,11 @@ import {
   connectQuickHost,
   destroySession,
   getSessionLog,
-  listSessions,
-  __setClientFactoryForTest,
-  type FakeableClient
+  listSessions
 } from './sessionManager';
 import { applyHostKeyDecision } from './hostKeyDecision';
+import { __setConnectionFactoryForTest } from './connection';
+import { makeFakeConnection } from './fakeConnection';
 
 const mockLoadConfig = vi.mocked(loadConfig);
 const mockStartDashboard = vi.mocked(startDashboard);
@@ -111,58 +111,13 @@ const fakeSession = (overrides: Partial<Session> = {}): Session =>
     ...overrides
   }) as unknown as Session;
 
-/** Фальшивый ClientChannel, достаточный, чтобы openShell() отработал без
- *  падения (данные потока в этих тестах не нужны — их разбор уже покрыт
- *  shellIntegrationSession.test.ts). */
-function fakeStream(): unknown {
-  return {
-    on: vi.fn(),
-    stderr: { on: vi.fn() },
-    write: vi.fn(),
-    setWindow: vi.fn()
-  };
-}
-
-/** Фальшивый ssh2.Client: копит обработчики on(event, …) и позволяет тесту
- *  сымитировать события сервера напрямую, без сети (Часть 2 спеки). */
-function makeFakeClient(): { client: FakeableClient; emit: (event: string, ...args: unknown[]) => void } {
-  const handlers = new Map<string, Array<(...args: unknown[]) => void>>();
-  let tunnels = 0;
-  const client = {
-    connect: vi.fn(),
-    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-      const list = handlers.get(event) ?? [];
-      list.push(handler);
-      handlers.set(event, list);
-      return client;
-    }),
-    shell: vi.fn((_opts: unknown, cb: (err: Error | undefined, stream: unknown) => void) => {
-      cb(undefined, fakeStream());
-    }),
-    exec: vi.fn(),
-    // Роль bastion (SSH-05): по умолчанию туннель открывается успешно, каждый
-    // раз новым каналом (по номеру видно, что попытка получила свой, а не
-    // переиспользовала прежний) — тесты, которым нужен отказ, переопределяют.
-    forwardOut: vi.fn(
-      (
-        _srcIP: string,
-        _srcPort: number,
-        _dstIP: string,
-        _dstPort: number,
-        cb: (err: Error | undefined, channel: unknown) => void
-      ) => {
-        cb(undefined, { tunnel: ++tunnels });
-      }
-    ),
-    end: vi.fn(),
-    destroy: vi.fn()
-  } as unknown as FakeableClient;
-
-  const emit = (event: string, ...args: unknown[]): void => {
-    for (const handler of handlers.get(event) ?? []) handler(...args);
-  };
-
-  return { client, emit };
+/** Фальшивое Соединение (по образцу общего `fakeConnection.ts`, PR-2
+ *  `.scratch/open-connection/spec.md`): копит обработчики on(event, …) и
+ *  позволяет тесту сымитировать события сервера напрямую, без сети.
+ *  `client` вместо `connection` — только чтобы не трогать тела тестов ниже. */
+function makeFakeClient(): { client: ReturnType<typeof makeFakeConnection>['connection']; emit: ReturnType<typeof makeFakeConnection>['emit'] } {
+  const { connection, emit } = makeFakeConnection();
+  return { client: connection, emit };
 }
 
 /**
@@ -177,12 +132,12 @@ describe('attemptConnectForTest', () => {
   });
 
   afterEach(() => {
-    __setClientFactoryForTest(null);
+    __setConnectionFactoryForTest(null);
   });
 
   it('успешное подключение: ready → openShell вызван, статус ready', async () => {
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
     const session = fakeSession();
 
     const promise = attemptConnectForTest(session, fakeHost(), 'pw', undefined, undefined, false);
@@ -196,7 +151,7 @@ describe('attemptConnectForTest', () => {
 
   it('неверный пароль с разрешённым повтором — auth-failed', async () => {
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
     const session = fakeSession();
 
     const promise = attemptConnectForTest(session, fakeHost(), 'wrong', undefined, undefined, true);
@@ -210,7 +165,7 @@ describe('attemptConnectForTest', () => {
 
   it('keyboard-interactive: отвечает паролем на каждый prompt сервера (SSH-06)', async () => {
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
     const session = fakeSession();
     const finish = vi.fn();
 
@@ -234,7 +189,7 @@ describe('attemptConnectForTest', () => {
 
   it('Quick Connect (hostId=0) — close после ready не планирует автопереподключение', async () => {
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
     const session = fakeSession({ hostId: 0 });
 
     const promise = attemptConnectForTest(session, fakeHost({ id: 0 }), 'pw', undefined, undefined, false);
@@ -250,7 +205,7 @@ describe('attemptConnectForTest', () => {
 
   it('закрытие канала до ready без allowAuthRetry — статус other, сессия disconnected', async () => {
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
     const session = fakeSession();
 
     const promise = attemptConnectForTest(session, fakeHost(), 'pw', undefined, undefined, false);
@@ -280,7 +235,7 @@ describe('applyHostKeyDecision — Quick Connect (hostId=0)', () => {
   });
 
   afterEach(() => {
-    __setClientFactoryForTest(null);
+    __setConnectionFactoryForTest(null);
   });
 
   it('accept сохраняет ключ и подтверждает подключение, а не отклоняет его', async () => {
@@ -295,7 +250,7 @@ describe('applyHostKeyDecision — Quick Connect (hostId=0)', () => {
     } as unknown as ReturnType<typeof getMainWindow>);
 
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const mockConnect = vi.mocked(client.connect);
 
@@ -343,7 +298,7 @@ describe('закрытие вкладки во время промпта отп�
   });
 
   afterEach(() => {
-    __setClientFactoryForTest(null);
+    __setConnectionFactoryForTest(null);
   });
 
   it('destroySession во время промпта убивает Client; «Принять» в оставшейся модалке не подключает и не шлёт пароль', async () => {
@@ -358,7 +313,7 @@ describe('закрытие вкладки во время промпта отп�
     } as unknown as ReturnType<typeof getMainWindow>);
 
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const { sessionId } = await connectHost(1);
     const mockConnect = vi.mocked(client.connect);
@@ -407,7 +362,7 @@ describe('закрытие вкладки во время промпта отп�
     } as unknown as ReturnType<typeof getMainWindow>);
 
     const { client, emit } = makeFakeClient();
-    __setClientFactoryForTest(() => client);
+    __setConnectionFactoryForTest(() => client);
 
     const { sessionId } = await connectHost(1);
     const mockConnect = vi.mocked(client.connect);
@@ -444,7 +399,7 @@ describe('закрытие вкладки во время промпта отп�
  * Реальное подключение через jump-хост (SSH-05, `.scratch/jump-host-support`,
  * тикет 02). Проверяется внешнее поведение цепочки — порядок хопов, параметры
  * forwardOut, канал-транспорт у целевого Client и различимость ошибок по
- * этапам — через тот же seam `__setClientFactoryForTest`, что и остальные
+ * этапам — через тот же seam `__setConnectionFactoryForTest`, что и остальные
  * сценарии attemptConnect; настоящих сокетов и SSH-сервера нет.
  */
 describe('подключение через jump-хост (SSH-05)', () => {
@@ -458,7 +413,7 @@ describe('подключение через jump-хост (SSH-05)', () => {
   function chainClients(count = 2): { hops: Fake[]; created: () => number } {
     const hops = Array.from({ length: count }, () => makeFakeClient());
     let index = 0;
-    __setClientFactoryForTest(() => {
+    __setConnectionFactoryForTest(() => {
       const hop = hops[index++];
       if (!hop) throw new Error(`фабрика Client вызвана больше ${count} раз`);
       return hop.client;
@@ -494,7 +449,7 @@ describe('подключение через jump-хост (SSH-05)', () => {
   });
 
   afterEach(() => {
-    __setClientFactoryForTest(null);
+    __setConnectionFactoryForTest(null);
   });
 
   it('bastion подключается первым, целевой хост — через forwardOut-канал', async () => {
@@ -526,7 +481,12 @@ describe('подключение через jump-хост (SSH-05)', () => {
     expect(destConfig['host']).toBe('10.0.0.5');
 
     dest.emit('ready');
-    expect(statusOf(sessionId)).toBe('connected');
+    // outcome — Promise (connection.ts, PR-2): settle() резолвит его как
+    // микрозадачу, openShell/setStatus идут в продолжении after await, не
+    // синхронно с событием 'ready' (решение 10 спеки).
+    await vi.waitFor(() => {
+      if (statusOf(sessionId) !== 'connected') throw new Error('сессия ещё не connected');
+    });
     // Shell и дашборд открываются только на целевом хосте.
     expect(mockStartDashboard).toHaveBeenCalledTimes(1);
     expect(jump.client.shell).not.toHaveBeenCalled();
@@ -613,6 +573,9 @@ describe('подключение через jump-хост (SSH-05)', () => {
       jump1.emit('ready');
       await waitForConnect(dest1);
       dest1.emit('ready');
+      // outcome — Promise (connection.ts, PR-2): под fake timers микрозадачи
+      // не текут сами по себе — прокачиваем явно (решение 10 спеки).
+      await vi.advanceTimersByTimeAsync(0);
       expect(statusOf(sessionId)).toBe('connected');
 
       dest1.emit('close'); // сервер разорвал соединение

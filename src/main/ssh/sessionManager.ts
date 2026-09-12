@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Client, type ClientChannel } from 'ssh2';
+import type { ClientChannel } from 'ssh2';
 import type { ConnectionLogEntry, SessionStatus } from '@shared/ssh';
 import { IPC } from '@shared/ipc';
 import type { Host } from '@shared/hosts';
@@ -8,7 +8,12 @@ import { getSecretForConnection } from '../keychain';
 import { loadConfig } from '../config/store';
 import { emit } from '../ipc/events';
 import { loadPrivateKey, PrivateKeyError } from './keys';
-import { requestHostKeyDecision, HOSTKEY_DECISION_TIMEOUT_MS } from './hostKeyDecision';
+import {
+  openConnection,
+  classifyConnectionError,
+  type Connection,
+  type ConnectionCredentials
+} from './connection';
 import { forwardOut } from './forwardOut';
 import { ShellChannel } from './shellChannel';
 import { startDashboard, stopDashboard } from './dashboard';
@@ -48,12 +53,12 @@ interface ManagedSession {
   id: string;
   hostId: number;
   hostName: string;
-  client: Client | null;
+  client: Connection | null;
   /** Соединение с jump-хостом (SSH-05), если хост подключается через bastion —
    *  держим отдельно от `client`: через него идёт только forwardOut-канал, а
    *  закрывать/пересоздавать нужно оба хопа. У каждой сессии он свой, пула нет
    *  (ADR-0007). */
-  jumpClient: Client | null;
+  jumpClient: Connection | null;
   status: SessionStatus;
   log: ConnectionLogEntry[];
   userClosed: boolean;
@@ -263,16 +268,23 @@ function stepFor(opts: AttemptOptions, step: ConnectionLogEntry['step']): Connec
 }
 
 /**
- * Один заход на подключение: создаёт Client, вешает все обработчики, зовёт
- * connect(). Возвращает 'ready' при успехе (openShell уже вызван внутри —
- * кроме роли 'jump', где shell не нужен), 'auth-failed' — сервер отклонил
- * аутентификацию ДО открытия сессии и разрешён повторный запрос пароля
- * (allowAuthRetry), 'other' — прочие случаи (уже залогированы, и session
- * переведена в disconnected через finishDisconnected — вызывающему дальше
- * ничего делать не нужно).
+ * Один заход на подключение: открывает одно Соединение через `connection.ts`
+ * (`openConnection`, ADR-0017) и решает, что делать с исходом. Возвращает
+ * 'ready' при успехе (openShell уже вызван внутри — кроме роли 'jump', где
+ * shell не нужен), 'auth-failed' — Соединение провалилось по аутентификации
+ * ДО открытия сессии и разрешён повторный запрос пароля (allowAuthRetry),
+ * 'other' — прочие случаи (уже залогированы, и session переведена в
+ * disconnected через finishDisconnected — вызывающему дальше ничего делать
+ * не нужно).
  *
- * Тестовый рычаг (Часть 2 спеки): реальный `Client` создаётся через
- * подменяемую фабрику `clientFactory` — см. `__setClientFactoryForTest` и
+ * Всё общее знание о том, как открыть Соединение через ssh2 (базовый
+ * конфиг, перевод err.level, проводка hostVerifier, ответ на
+ * keyboard-interactive, пустой пароль) — в `connection.ts`; здесь остаётся
+ * только оркестрация, законно разная у сессии и теста (`testConnection.ts`):
+ * что логировать, когда переоткрывать соединение, когда открывать shell/дашборд.
+ *
+ * Тестовый рычаг (Часть 2 спеки): реальное Соединение создаётся через
+ * подменяемую фабрику `connection.ts` — см. `__setConnectionFactoryForTest` и
  * `attemptConnectForTest` внизу файла.
  */
 async function attemptConnect(
@@ -287,8 +299,8 @@ async function attemptConnect(
   const isJump = opts.role === 'jump';
 
   // Свой канал через bastion на каждую попытку (SSH-05): предыдущая унесла
-  // свой с собой, когда её Client закрылся. Client целевого хоста ещё не
-  // создаётся — если туннель не открылся, подключать нечего.
+  // свой с собой, когда её Соединение закрылось. Соединение целевого хоста
+  // ещё не создаётся — если туннель не открылся, подключать нечего.
   let sock: ClientChannel | undefined;
   if (opts.openSock) {
     try {
@@ -303,212 +315,136 @@ async function attemptConnect(
     }
   }
 
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (v: 'ready' | 'auth-failed' | 'other'): void => {
-      if (settled) return;
-      settled = true;
-      resolve(v);
-    };
+  // Выбор по переданным кредам, а не по host.authMethod: для key-хоста с
+  // ожидающим дозаписи ключом (HM-12) первый вход идёт по паролю.
+  const credentials: ConnectionCredentials =
+    password !== undefined
+      ? { kind: 'password', password }
+      : { kind: 'key', privateKey: privateKey as Buffer, passphrase: keyPassphrase };
 
-    const cfg = loadConfig();
-    // Тестовый дублёр реализует только узкий FakeableClient — приводим к
-    // Client один раз здесь, на границе seam'а (см. FakeableClient внизу
-    // файла); дальше по функции и в openShell/dashboard.ts используется
-    // обычный тип Client, ничего о подмене не зная.
-    const client = clientFactory() as unknown as Client;
-    if (isJump) session.jumpClient = client;
-    else session.client = client;
-
-    client.on('greeting', (greeting: string) => {
-      // Баннер сервера — недоверенный текст; в лог кладём только факт
-      void greeting;
-      log(session, 'info', 'clog.greeting', undefined, stepFor(opts, 'tcp'));
-    });
-
-    client.on('handshake', (negotiated) => {
-      log(
-        session,
-        'info',
-        'clog.handshake',
-        {
-          kex: negotiated?.kex ?? '?',
-          cipher: negotiated?.cs?.cipher ?? '?',
-          mac: negotiated?.cs?.mac ?? '',
-          ms: Date.now() - session.connectStartedAt
-        },
-        stepFor(opts, 'handshake')
-      );
-    });
-
-    // Некоторые серверы не предлагают password auth, только keyboard-interactive
-    // (виден как "Keyboard-interactive authentication prompts from server" в
-    // PuTTY-логах). ssh2 не пробует его без tryKeyboard: true и обработчика —
-    // отвечаем тем же паролем, что и в connectConfig, это не альтернатива
-    // password auth, а его серверный вариант (SSH-06).
-    client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
-      const answer = password ?? '';
-      finish(prompts.map(() => answer));
-    });
-
-    client.on('ready', () => {
-      session.reconnectAttempts = 0;
-      log(
-        session,
-        'info',
-        'clog.ready',
-        {
-          method: password !== undefined ? 'password' : host.authMethod,
-          ms: Date.now() - session.connectStartedAt
-        },
-        stepFor(opts, 'auth')
-      );
-      // HM-12 шаг 4: успешный пароль-логин — момент автоматической дозаписи
-      // ожидающего публичного ключа в authorized_keys (дедупликация внутри;
-      // no-op, если для этого keyPath ничего не ждёт). Помимо тихой записи в
-      // «Детали подключения», результат печатается прямо в терминал — в этот
-      // момент пользователь и так смотрит именно туда (только что вводил
-      // пароль), а лог подключения открывают редко.
-      if (password !== undefined && host.keyPath) {
-        void deployPendingKey(client, host.keyPath, (level, key) => {
-          log(session, level, key, undefined, stepFor(opts, 'session'));
-          emit(IPC.evTerminalData, session.id, `\r\n${t(key)}\r\n`);
-        });
-      }
-      // Bastion — только транспорт: shell и дашборд открываются на целевом
-      // хосте, а туннель через этот Client поднимает establishJumpTunnel.
-      if (!isJump) openShell(session, client);
-      settle('ready');
-    });
-
-    let authFailed = false;
-    // Отказ по отпечатку ssh2 сообщает обычной ошибкой соединения (level
-    // 'handshake') — без этого флага она была бы неотличима от «сервер
-    // недоступен», и в «Деталях подключения» после «Подключение отклонено
-    // пользователем» появлялась бы ложная clog.error.socket (см. spec PR-1,
-    // расхождение 2). Решение по ключу (hostKeyDecision.ts) уже записало
-    // свою причину в лог — вторая запись не нужна.
-    let hostKeyRejected = false;
-    // Этот Client уже закрыт — запоздалое решение пользователя по ключу
-    // (закрытие вкладки во время промпта, затем «Принять» в оставшейся
-    // модалке) до ssh2 доводить незачем: known_hosts обновляется независимо
-    // от Client (см. handleHostKey/hostKeyDecision.ts), а отправка пароля в
-    // мёртвый сокет — нет.
-    let clientClosed = false;
-    client.on('error', (err: Error & { level?: string }) => {
-      if (hostKeyRejected) return;
-      const category =
-        err.level === 'client-authentication'
-          ? 'auth'
-          : err.level === 'client-timeout'
-            ? 'timeout'
-            : 'socket';
-      if (category === 'auth') authFailed = true;
-      // Текст ошибки ssh2 не содержит секретов, но для надёжности не пробрасываем его.
-      // Общий ключ для bastion и целевого хоста — различение по `step` (см.
-      // wrapJumpStep в renderer), не по отдельному переводу.
-      log(
-        session,
-        'error',
-        `clog.error.${category}`,
-        undefined,
-        stepFor(opts, category === 'auth' ? 'auth' : 'tcp')
-      );
-    });
-
-    client.on('close', () => {
-      clientClosed = true;
-      if (isJump) {
-        // Bastion закрылся. До 'ready' — это провал всей попытки (ниже общая
-        // ветка); после — целевой Client всё равно потеряет свой forwardOut-
-        // канал и уйдёт в обычное автопереподключение (SSH-06), которое
-        // поднимет оба хопа заново; отдельной логики здесь не нужно.
-        if (settled) {
-          session.jumpClient = null;
-          return;
-        }
-      }
-      if (settled) {
-        // Сессия уже была открыта раньше — обычное последующее отключение,
-        // штатная логика автопереподключения (не связана с retry паролем).
-        if (session.userClosed || session.shellUnavailable) {
-          finishDisconnected(session);
-          return;
-        }
-        // HM-11: Quick Connect (hostId=0) не переподключается автоматически —
-        // хост нигде не сохранён, getHost(0) всегда null, реконнектить нечем.
-        if (session.hostId !== 0 && session.status === 'connected' && loadConfig().connection.autoreconnect) {
-          scheduleReconnect(session);
-          return;
-        }
-        if (session.hostId !== 0 && session.status === 'reconnecting') {
-          scheduleReconnect(session);
-          return;
-        }
-        finishDisconnected(session);
-        return;
-      }
-      // Закрытие ДО 'ready' — эта попытка подключения провалилась.
-      if (authFailed && allowAuthRetry) {
-        settle('auth-failed');
-        return;
-      }
-      finishDisconnected(session);
-      settle('other');
-    });
-
-    const connectConfig: Parameters<Client['connect']>[0] = {
-      host: host.address,
-      port: host.port,
-      username: host.username,
-      // readyTimeout охватывает весь путь до 'ready', включая ожидание решения
-      // пользователя по fingerprint в hostVerifier. Добавляем окно решения, иначе
-      // долгое подтверждение отпечатка ложно роняет соединение по таймауту.
-      // Недоступность сервера ловится раньше ОС-ошибками сокета (refused/unreachable).
-      readyTimeout: cfg.connection.connectTimeoutSec * 1000 + HOSTKEY_DECISION_TIMEOUT_MS,
-      keepaliveInterval: cfg.connection.keepaliveIntervalSec * 1000,
-      keepaliveCountMax: 3,
-      tryKeyboard: true,
-      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
-        handleHostKey(
+  const { connection, outcome } = openConnection(
+    { name: host.name, address: host.address, port: host.port, username: host.username },
+    credentials,
+    {
+      purpose: 'session',
+      sock,
+      logger: (level, messageKey, params) => log(session, level, messageKey, params, stepFor(opts, 'hostkey')),
+      onGreeting: () => log(session, 'info', 'clog.greeting', undefined, stepFor(opts, 'tcp')),
+      onHandshake: (negotiated) =>
+        log(
           session,
-          host,
-          key,
-          (valid) => {
-            if (!valid) hostKeyRejected = true;
-            // Client уже закрыт (см. объявление clientClosed выше) — в
-            // мёртвый ssh2-хендшейк запоздалое решение не передаём.
-            if (clientClosed) return;
-            verify(valid);
+          'info',
+          'clog.handshake',
+          {
+            kex: negotiated?.kex ?? '?',
+            cipher: negotiated?.cs?.cipher ?? '?',
+            mac: negotiated?.cs?.mac ?? '',
+            ms: Date.now() - session.connectStartedAt
           },
-          opts
-        );
-      }
-    };
-
-    // Подключение через jump-хост (SSH-05): вместо собственного TCP ssh2 берёт
-    // открытый выше канал bastion→target. host/port остаются адресом целевого
-    // сервера — они нужны для known_hosts и сообщений лога.
-    if (sock) connectConfig.sock = sock;
-
-    // Выбор по переданным кредам, а не по host.authMethod: для key-хоста с
-    // ожидающим дозаписи ключом (HM-12) первый вход идёт по паролю.
-    if (password !== undefined) {
-      if (password) connectConfig.password = password;
-    } else {
-      connectConfig.privateKey = privateKey;
-      if (keyPassphrase) connectConfig.passphrase = keyPassphrase;
+          stepFor(opts, 'handshake')
+        )
     }
+  );
 
-    // Секрет живёт только в локальной области видимости этой функции и в
-    // конфиге ssh2 на время подключения — нигде не кэшируется (§9.9 гайда).
-    try {
-      client.connect(connectConfig);
-    } catch {
-      log(session, 'error', 'clog.error.socket', undefined, stepFor(opts, 'tcp'));
+  if (isJump) session.jumpClient = connection;
+  else session.client = connection;
+
+  const result = await outcome;
+
+  if (result.ok) {
+    session.reconnectAttempts = 0;
+    log(
+      session,
+      'info',
+      'clog.ready',
+      {
+        method: password !== undefined ? 'password' : host.authMethod,
+        ms: Date.now() - session.connectStartedAt
+      },
+      stepFor(opts, 'auth')
+    );
+    // HM-12 шаг 4: успешный пароль-логин — момент автоматической дозаписи
+    // ожидающего публичного ключа в authorized_keys (дедупликация внутри;
+    // no-op, если для этого keyPath ничего не ждёт). Помимо тихой записи в
+    // «Детали подключения», результат печатается прямо в терминал — в этот
+    // момент пользователь и так смотрит именно туда (только что вводил
+    // пароль), а лог подключения открывают редко.
+    if (password !== undefined && host.keyPath) {
+      void deployPendingKey(connection, host.keyPath, (level, key) => {
+        log(session, level, key, undefined, stepFor(opts, 'session'));
+        emit(IPC.evTerminalData, session.id, `\r\n${t(key)}\r\n`);
+      });
+    }
+    // Ошибки и закрытие ПОСЛЕ ready — своя логика (автопереподключение,
+    // bastion как транспорт), не то же самое, что провал попытки входа;
+    // connection.ts про них не знает (решение 10 спеки). Микрозадержка
+    // между ready и навешиванием безопасна — см. connection.ts.
+    attachPostReadyLifecycle(session, connection, opts);
+    // Bastion — только транспорт: shell и дашборд открываются на целевом
+    // хосте, а туннель через это Соединение поднимает establishJumpTunnel.
+    if (!isJump) openShell(session, connection);
+    return 'ready';
+  }
+
+  // Решение по ключу (hostKeyDecision.ts) уже записало свою причину в лог —
+  // вторая запись не нужна (ADR-0017, расхождение 2 спеки PR-1).
+  if (result.reason !== 'hostkey-rejected') {
+    // Текст ошибки ssh2 не содержит секретов, но для надёжности не пробрасываем его.
+    // Общий ключ для bastion и целевого хоста — различение по `step` (см.
+    // wrapJumpStep в renderer), не по отдельному переводу.
+    log(
+      session,
+      'error',
+      `clog.error.${result.reason}`,
+      undefined,
+      stepFor(opts, result.reason === 'auth' ? 'auth' : 'tcp')
+    );
+  }
+
+  if (result.reason === 'auth' && allowAuthRetry) return 'auth-failed';
+
+  finishDisconnected(session);
+  return 'other';
+}
+
+/**
+ * Ошибки и закрытие ПОСЛЕ ready (решение 10 спеки PR-2): категорию берёт
+ * `classifyConnectionError` — тот же перевод err.level, что и в
+ * `connection.ts`, чтобы не раздвоился снова (как до PR-1). До ready этими
+ * событиями занимается `outcome` из `openConnection` — сюда попадают только
+ * подписки, добавленные уже после успеха.
+ */
+function attachPostReadyLifecycle(session: ManagedSession, connection: Connection, opts: AttemptOptions): void {
+  const isJump = opts.role === 'jump';
+
+  connection.on('error', (err) => {
+    const category = classifyConnectionError(err);
+    log(session, 'error', `clog.error.${category}`, undefined, stepFor(opts, category === 'auth' ? 'auth' : 'tcp'));
+  });
+
+  connection.on('close', () => {
+    if (isJump) {
+      // Bastion закрылся после ready — целевое Соединение всё равно потеряет
+      // свой forwardOut-канал и уйдёт в обычное автопереподключение (SSH-06),
+      // которое поднимет оба хопа заново; отдельной логики здесь не нужно.
+      session.jumpClient = null;
+      return;
+    }
+    if (session.userClosed || session.shellUnavailable) {
       finishDisconnected(session);
-      settle('other');
+      return;
     }
+    // HM-11: Quick Connect (hostId=0) не переподключается автоматически —
+    // хост нигде не сохранён, getHost(0) всегда null, реконнектить нечем.
+    if (session.hostId !== 0 && session.status === 'connected' && loadConfig().connection.autoreconnect) {
+      scheduleReconnect(session);
+      return;
+    }
+    if (session.hostId !== 0 && session.status === 'reconnecting') {
+      scheduleReconnect(session);
+      return;
+    }
+    finishDisconnected(session);
   });
 }
 
@@ -744,31 +680,12 @@ async function passwordLoginLoop(
   }
 }
 
-function handleHostKey(
-  session: ManagedSession,
-  host: Host,
-  rawKey: Buffer,
-  verify: (valid: boolean) => void,
-  opts: AttemptOptions = TARGET
-): void {
-  const step = stepFor(opts, 'hostkey');
-  requestHostKeyDecision({
-    hostName: host.name,
-    address: host.address,
-    port: host.port,
-    rawKey,
-    verify,
-    purpose: 'session',
-    logger: (level, messageKey, params) => log(session, level, messageKey, params, step)
-  });
-}
-
 /**
  * Открытие интерактивного shell-канала после успешной аутентификации (TERM-01).
  * Вывод сервера — недоверенные данные: пересылается в renderer как строка и
  * вставляется в xterm через write(), не innerHTML (TERM-07, §13 гайда).
  */
-function openShell(session: ManagedSession, client: Client): void {
+function openShell(session: ManagedSession, client: Pick<Connection, 'shell' | 'exec'>): void {
   client.shell({ term: 'xterm-256color', cols: DEFAULT_COLS, rows: DEFAULT_ROWS }, (err, stream) => {
     if (err) {
       log(session, 'error', 'clog.shellError', undefined, 'session');
@@ -963,46 +880,7 @@ export function activeSessionCount(): number {
   ).length;
 }
 
-// ---------------------------------------------------------------------------
-// Transport seam (Часть 2 спеки): фабрика Client подменяема на уровне модуля —
-// тестам не нужен настоящий SSH-сервер, чтобы проверить attemptConnect (повтор
-// пароля, keyboard-interactive, host-key verifier, отказ Quick Connect от
-// автопереподключения). Публичные функции (connectHost, connectQuickHost,
-// IPC-слой в ipc/sessions.ts) щели не видят — она приходит в игру только
-// внутри attemptConnect. FakeableClient — узкий контракт: только то, чем
-// реально пользуются sessionManager/dashboard.ts, не весь API ssh2.Client.
-// ---------------------------------------------------------------------------
-
-type ClientEventMap = {
-  greeting: (greeting: string) => void;
-  handshake: (negotiated: { kex?: string; cs?: { cipher?: string; mac?: string } }) => void;
-  'keyboard-interactive': (
-    name: string,
-    instructions: string,
-    lang: string,
-    prompts: Array<{ prompt: string; echo: boolean }>,
-    finish: (answers: string[]) => void
-  ) => void;
-  ready: () => void;
-  error: (err: Error & { level?: string }) => void;
-  close: () => void;
-};
-
-export interface FakeableClient {
-  connect(config: Parameters<Client['connect']>[0]): void;
-  on<E extends keyof ClientEventMap>(event: E, handler: ClientEventMap[E]): unknown;
-  shell: Client['shell'];
-  exec: Client['exec'];
-  /** Туннель до целевого хоста, когда этот Client — bastion (SSH-05). */
-  forwardOut: Client['forwardOut'];
-  end(): void;
-  destroy(): void;
-}
-
-let clientFactory: () => FakeableClient = () => new Client();
-
-/** Тестовый рычаг (по образцу `parseMetricsForTest` в dashboard.ts): подменить
- *  фабрику Client фальшивым дублёром или сбросить к настоящему ssh2.Client. */
-export function __setClientFactoryForTest(factory: (() => FakeableClient) | null): void {
-  clientFactory = factory ?? (() => new Client());
-}
+// Тестовый рычаг для attemptConnect (повтор пароля, keyboard-interactive,
+// host-key verifier, отказ Quick Connect от автопереподключения) — теперь в
+// connection.ts (`__setConnectionFactoryForTest`, ADR-0017/PR-2): подменяемая
+// фабрика одна на весь src/main/ssh, а не своя в каждом из двух файлов.

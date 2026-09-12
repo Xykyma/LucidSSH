@@ -2,9 +2,9 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Client } from 'ssh2';
 import type { KeygenGenerateRequest, KeygenGenerateResult, PendingKeyDeployment } from '@shared/keygen';
 import { loadConfig, updateConfig } from '../config/store';
+import type { Connection } from './connection';
 
 /**
  * Мастер создания SSH-ключа (HM-12):
@@ -202,7 +202,7 @@ export function buildAppendCommand(publicKeyLine: string): string {
 }
 
 function execOnClient(
-  client: Client,
+  client: Pick<Connection, 'exec'>,
   command: string
 ): Promise<{ exitCode: number | null; stdout: string }> {
   return new Promise((resolve, reject) => {
@@ -247,7 +247,7 @@ export type DeployLogger = (level: 'info' | 'warn', messageKey: string) => void;
  * при следующем пароль-логине.
  */
 export async function deployPendingKey(
-  client: Client,
+  client: Pick<Connection, 'exec'>,
   keyPath: string,
   log: DeployLogger
 ): Promise<void> {
