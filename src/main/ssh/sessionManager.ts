@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Client, type ClientChannel } from 'ssh2';
-import type { ConnectionLogEntry, HostKeyPrompt, SessionStatus } from '@shared/ssh';
+import type { ConnectionLogEntry, SessionStatus } from '@shared/ssh';
 import { IPC } from '@shared/ipc';
 import type { Host } from '@shared/hosts';
 import { getHost } from '../hosts/repository';
@@ -8,13 +8,7 @@ import { getSecretForConnection } from '../keychain';
 import { loadConfig } from '../config/store';
 import { emit } from '../ipc/events';
 import { loadPrivateKey, PrivateKeyError } from './keys';
-import {
-  addKnownKey,
-  findKnownKey,
-  keyTypeFromBlob,
-  replaceKnownKey,
-  sha256Fingerprint
-} from './knownHosts';
+import { requestHostKeyDecision, HOSTKEY_DECISION_TIMEOUT_MS } from './hostKeyDecision';
 import { forwardOut } from './forwardOut';
 import { ShellChannel } from './shellChannel';
 import { startDashboard, stopDashboard } from './dashboard';
@@ -81,24 +75,6 @@ interface ManagedSession {
   shellChannel: ShellChannel | null;
 }
 
-interface PendingHostKey {
-  sessionId: string;
-  /** Адрес/порт сервера, к которому относится этот ключ — берутся из `host`,
-   *  переданного в handleHostKey, а не из getHost(session.hostId): для Quick
-   *  Connect (HM-11) hostId=0 и getHost(0) всегда null (SSH-03/04-регресс,
-   *  см. .scratch/quickconnect-hostkey-confirm-bug/spec.md). */
-  address: string;
-  port: number;
-  verify: (valid: boolean) => void;
-  keyType: string;
-  rawKey: Buffer;
-  isChanged: boolean;
-  /** Этап лога для решения по этому ключу: 'jump' — отпечаток bastion,
-   *  'hostkey' — целевого хоста (SSH-05, оба диалога идут подряд). */
-  step: ConnectionLogEntry['step'];
-  timeout: NodeJS.Timeout;
-}
-
 interface PendingAuthPrompt {
   sessionId: string;
   resolve: (answers: string[]) => void;
@@ -107,12 +83,10 @@ interface PendingAuthPrompt {
 }
 
 const sessions = new Map<string, ManagedSession>();
-const pendingHostKeys = new Map<string, PendingHostKey>();
 const pendingAuthPrompts = new Map<string, PendingAuthPrompt>();
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 2500;
-const HOSTKEY_DECISION_TIMEOUT_MS = 5 * 60 * 1000;
 const AUTH_PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
 const MAX_PASSPHRASE_ATTEMPTS = 3;
 const MAX_PASSWORD_ATTEMPTS = 3;
@@ -750,57 +724,16 @@ function handleHostKey(
   verify: (valid: boolean) => void,
   opts: AttemptOptions = TARGET
 ): void {
-  const keyType = keyTypeFromBlob(rawKey);
-  const fingerprint = sha256Fingerprint(rawKey);
   const step = stepFor(opts, 'hostkey');
-  log(session, 'info', 'clog.hostkeyReceived', { keyType, fingerprint }, step);
-
-  const known = findKnownKey(host.address, host.port, keyType);
-
-  if (known && known.keyBase64 === rawKey.toString('base64')) {
-    log(session, 'info', 'clog.hostkeyKnown', undefined, step);
-    verify(true);
-    return;
-  }
-
-  const isChanged = known !== null;
-  const requestId = randomUUID();
-  const timeout = setTimeout(() => {
-    const pending = pendingHostKeys.get(requestId);
-    if (pending) {
-      pendingHostKeys.delete(requestId);
-      log(session, 'warn', 'clog.hostkeyTimeout', undefined, step);
-      pending.verify(false);
-    }
-  }, HOSTKEY_DECISION_TIMEOUT_MS);
-
-  pendingHostKeys.set(requestId, {
-    sessionId: session.id,
-    address: host.address,
-    port: host.port,
-    verify,
-    keyType,
-    rawKey,
-    isChanged,
-    step,
-    timeout
-  });
-
-  log(session, isChanged ? 'warn' : 'info', isChanged ? 'clog.hostkeyChanged' : 'clog.hostkeyNew', undefined, step);
-
-  const prompt: HostKeyPrompt = {
-    requestId,
+  requestHostKeyDecision({
     hostId: host.id,
     hostName: host.name,
     address: host.address,
     port: host.port,
-    fingerprintSha256: fingerprint,
-    isChanged,
-    previousFingerprint: known
-      ? sha256Fingerprint(Buffer.from(known.keyBase64, 'base64'))
-      : undefined
-  };
-  emit(IPC.evHostKeyPrompt, prompt);
+    rawKey,
+    verify,
+    logger: (level, messageKey, params) => log(session, level, messageKey, params, step)
+  });
 }
 
 /**
@@ -880,30 +813,6 @@ export function sendCommandLine(sessionId: string, command: string, guardStatus?
  *  ResizeObserver в XtermView) досинхронизирует размер. */
 export function resizeSession(sessionId: string, cols: number, rows: number): void {
   sessions.get(sessionId)?.shellChannel?.resize(cols, rows);
-}
-
-/** Решение пользователя по fingerprint (SSH-03/04). */
-export function confirmHostKey(requestId: string, decision: 'accept' | 'reject'): void {
-  const pending = pendingHostKeys.get(requestId);
-  if (!pending) return; // просроченный/неизвестный requestId игнорируется
-  pendingHostKeys.delete(requestId);
-  clearTimeout(pending.timeout);
-
-  const session = sessions.get(pending.sessionId);
-
-  if (decision === 'accept' && session) {
-    if (pending.isChanged) {
-      replaceKnownKey(pending.address, pending.port, pending.keyType, pending.rawKey);
-      log(session, 'warn', 'clog.hostkeyReplaced', undefined, pending.step);
-    } else {
-      addKnownKey(pending.address, pending.port, pending.keyType, pending.rawKey);
-      log(session, 'info', 'clog.hostkeyAccepted', undefined, pending.step);
-    }
-    pending.verify(true);
-  } else {
-    if (session) log(session, 'warn', 'clog.hostkeyRejected', undefined, pending.step);
-    pending.verify(false);
-  }
 }
 
 /**

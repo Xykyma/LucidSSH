@@ -46,13 +46,13 @@ import {
   attemptConnectForTest,
   connectHost,
   connectQuickHost,
-  confirmHostKey,
   destroySession,
   getSessionLog,
   listSessions,
   __setClientFactoryForTest,
   type FakeableClient
 } from './sessionManager';
+import { applyHostKeyDecision } from './hostKeyDecision';
 
 const mockLoadConfig = vi.mocked(loadConfig);
 const mockStartDashboard = vi.mocked(startDashboard);
@@ -264,13 +264,15 @@ describe('attemptConnectForTest', () => {
 });
 
 /**
- * Регресс на `.scratch/quickconnect-hostkey-confirm-bug/spec.md`: confirmHostKey
- * брал address/port через getHost(session.hostId), который для Quick Connect
- * (hostId=0, HM-11) всегда null — accept проваливался в reject-ветку. Тест гоняет
- * confirmHostKey через реальный pendingHostKeys/sessions, populate которых
- * возможен только публичным путём connectQuickHost (карты приватны модулю).
+ * Регресс на `.scratch/quickconnect-hostkey-confirm-bug/spec.md`: старый
+ * confirmHostKey брал address/port через getHost(session.hostId), который для
+ * Quick Connect (hostId=0, HM-11) всегда null — accept проваливался в
+ * reject-ветку. Машинка решения (`hostKeyDecision.ts`, `.scratch/host-key-decision`)
+ * теперь берёт address/port из аргументов запроса, а не из хоста по id — тест
+ * проверяет это сквозь реальный путь connectQuickHost → hostVerifier →
+ * applyHostKeyDecision.
  */
-describe('confirmHostKey — Quick Connect (hostId=0)', () => {
+describe('applyHostKeyDecision — Quick Connect (hostId=0)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue(fakeConfig());
@@ -316,7 +318,7 @@ describe('confirmHostKey — Quick Connect (hostId=0)', () => {
     const requestId = sentPrompts[0]?.requestId;
     if (!requestId) throw new Error('requestId отсутствует в отправленном prompt');
 
-    confirmHostKey(requestId, 'accept');
+    applyHostKeyDecision(requestId, 'accept');
 
     expect(verifySpy).toHaveBeenCalledWith(true);
     expect(mockAddKnownKey).toHaveBeenCalledWith('10.0.0.9', 22, expect.any(String), expect.any(Buffer));

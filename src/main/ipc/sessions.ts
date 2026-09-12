@@ -4,7 +4,6 @@ import type { ConnectionLogEntry, SessionStatus, TestConnectionResult } from '@s
 import { parseQuickConnect } from '@shared/quickConnect';
 import {
   answerAuthPrompt,
-  confirmHostKey,
   connectHost,
   connectQuickHost,
   destroySession,
@@ -14,6 +13,7 @@ import {
   resizeSession,
   sessionExists
 } from '../ssh/sessionManager';
+import { applyHostKeyDecision } from '../ssh/hostKeyDecision';
 import {
   cancelDangerousCommand,
   confirmDangerousCommand,
@@ -160,7 +160,7 @@ export function registerSessionIpcHandlers(): void {
       if (rawDecision !== 'accept' && rawDecision !== 'reject') {
         throw new IpcValidationError('decision: accept|reject expected');
       }
-      confirmHostKey(requestId, rawDecision);
+      applyHostKeyDecision(requestId, rawDecision);
     }
   );
 
