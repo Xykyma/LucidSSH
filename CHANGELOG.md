@@ -34,6 +34,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **App shortcuts no longer send a stray control byte to the server on top of doing their job.** `Ctrl+F` (search) also sent `0x06` to the shell, `Ctrl+W` (close tab) also sent `0x17` — a kill-word in most shells. Only `Ctrl+Space` was handled correctly. A shortcut that the app acts on is now consumed by the app, and this holds for any combination you rebind it to.
 - **Assigning a new shortcut in Settings no longer triggers the action you're rebinding.** Pressing `Ctrl+F` while capturing a combination assigned it *and* opened the terminal search behind the Settings overlay.
 
+### Security
+
+- **The "Test the connection" button no longer sends your password to a server whose host key was never checked.** For the target host, the button used to skip fingerprint verification entirely and authenticate anyway; a jump host's key was checked, but only against keys already known, so a jump host that had never been opened on its own always failed the test even though a real connection through it worked fine. Both hops now go through the same trust decision a normal connection uses: an unfamiliar or changed key shows the fingerprint and asks for confirmation before any password or key is sent. A server verified this way is remembered, so the first real connection to it doesn't ask again.
+
 ## [1.0.1] — 2026-08-05
 
 ### Added
