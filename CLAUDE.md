@@ -194,7 +194,8 @@ Of the three ADRs recorded from that session, only `docs/agent/adr/0002-no-local
   - guard patterns (`guard/patterns.ts`) — both firing correctly and not false-positiving;
   - secret masking (`secrets/maskers.ts`) — against real-world leak examples (guide §15);
   - merging content-database cores with translations (errors/commands) — linked by `id`, fallback when a key is missing;
-  - error detector — matching patterns from the required-coverage set (ERR-04/05).
+  - error detector — matching patterns from the required-coverage set (ERR-04/05);
+  - the host-key decision module (`src/main/ssh/`, extracted from `sessionManager` — see `docs/agent/adr/0016-host-key-trust-is-a-property-of-the-connection.md`) — every branch of "may we trust this key": match, unknown key, changed key, accept, reject, decision timeout, and a decision taken without a live Session. Reject and timeout must leave `known_hosts` untouched. This is the implementation of SEC-03 and SSH-07, and a wrong branch degrades silently: no screen reports it, `known_hosts` just quietly fills with the wrong keys.
 - These modules **cannot be changed without updating their tests** in the same change.
 - Test framework — **vitest** (decision from 2026-07-02). Test files — `*.test.ts` next to the module.
 - UI components are covered in 1.0 as needed, with no hard requirement; priority is main-process logic.
