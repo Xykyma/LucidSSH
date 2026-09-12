@@ -726,12 +726,12 @@ function handleHostKey(
 ): void {
   const step = stepFor(opts, 'hostkey');
   requestHostKeyDecision({
-    hostId: host.id,
     hostName: host.name,
     address: host.address,
     port: host.port,
     rawKey,
     verify,
+    purpose: 'session',
     logger: (level, messageKey, params) => log(session, level, messageKey, params, step)
   });
 }

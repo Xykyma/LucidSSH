@@ -36,6 +36,16 @@ export function FingerprintModal({
   };
 
   const changed = prompt.isChanged;
+  // 'test' (кнопка «Проверить соединение», ADR-0016 PR-2) не открывает
+  // Сессию после accept — «…и подключиться» в подписи кнопки было бы неправдой.
+  const confirmKey =
+    prompt.purpose === 'test'
+      ? changed
+        ? 'fp.confirmChangedTest'
+        : 'fp.confirmTest'
+      : changed
+        ? 'fp.confirmChanged'
+        : 'fp.confirm';
 
   return (
     <div
@@ -157,7 +167,7 @@ export function FingerprintModal({
                 : 'h-[34px] rounded-[4px] bg-accent px-4 text-[13px] font-semibold text-white hover:bg-accent-hover'
             }
           >
-            {changed ? t('fp.confirmChanged') : t('fp.confirm')}
+            {t(confirmKey)}
           </button>
         </div>
       </div>

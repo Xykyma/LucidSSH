@@ -374,12 +374,14 @@
     "copy": "Copy",
     "copied": "Copied ✓",
     "confirm": "Confirm and connect",
+    "confirmTest": "Confirm",
     "titleChanged": "Server fingerprint has changed",
     "bodyChanged": "The saved fingerprint of “{{host}}” does not match the new one. This happens after a server reinstall or update, but may also mean a man-in-the-middle attack. Verify the new fingerprint via an independent source: hosting panel or server console.",
     "previous": "Was",
     "current": "Now",
     "ackChanged": "I verified the new fingerprint via an independent source",
     "confirmChanged": "Replace key and connect",
+    "confirmChangedTest": "Replace key",
     "whereToFind": "Where do I find it",
     "whereToFindText": "If your hosting provider shows the fingerprint (e.g. in the server console) — compare it against this one. If it doesn't — that's normal for many hosting providers, and you can trust this connection. If the fingerprint changes later, LucidSSH will block the connection and warn you.",
     "whereToFindMore": "Learn more →"
@@ -413,7 +415,8 @@
     "error": {
       "auth": "Authentication error — the server rejected the password or key",
       "timeout": "Connection timeout — the server did not respond in time",
-      "socket": "Network error — server unreachable or port closed"
+      "socket": "Network error — server unreachable or port closed",
+      "hostkeyRejected": "Server fingerprint not confirmed — connection cancelled"
     },
     "keyError": {
       "not-found": "Private key file not found",
