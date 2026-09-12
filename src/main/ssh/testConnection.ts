@@ -169,6 +169,11 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
     // сеть вместо того, чтобы подтвердить ключ (SSH-03/04).
     let hostKeyRejected = false;
     const hostKeyRejectedErrorKey = opts.role === 'jump' ? 'clog.jump.hostkeyUnknown' : 'clog.error.hostkeyRejected';
+    // Этот Client уже закрыт (например, вызывающая сторона отказалась от
+    // попытки раньше решения по ключу) — запоздалый verify до ssh2 доводить
+    // незачем: сокет мёртв, а решение по ключу (accept/reject) применяется
+    // независимо от этого Client (см. spec PR-1).
+    let closed = false;
 
     client.on('ready', () => settle({ ok: true, client }));
     client.on('error', (err: Error & { level?: string }) => {
@@ -184,12 +189,13 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
             : 'socket';
       settle({ ok: false, errorKey: `clog.error.${category}` });
     });
-    client.on('close', () =>
+    client.on('close', () => {
+      closed = true;
       settle({
         ok: false,
         errorKey: hostKeyRejected ? hostKeyRejectedErrorKey : 'clog.error.socket'
-      })
-    );
+      });
+    });
 
     const connectConfig: Parameters<Client['connect']>[0] = {
       host: target.address,
@@ -199,6 +205,10 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
       // пользователя по fingerprint в hostVerifier (см. sessionManager.ts) —
       // без этого слагаемого честная сверка отпечатка роняла бы тест таймаутом.
       readyTimeout: cfg.connection.connectTimeoutSec * 1000 + HOSTKEY_DECISION_TIMEOUT_MS,
+      // Как в sessionManager.ts (решение 7 спеки) — тест не мешает: таймер
+      // стартует на USERAUTH_SUCCESS, а после ready клиент сразу зовёт end().
+      keepaliveInterval: cfg.connection.keepaliveIntervalSec * 1000,
+      keepaliveCountMax: 3,
       tryKeyboard: true,
       hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
         requestHostKeyDecision({
@@ -209,6 +219,10 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
           purpose: 'test',
           verify: (valid) => {
             if (!valid) hostKeyRejected = true;
+            // Client уже закрыт (см. объявление closed выше) — решение
+            // по ключу применяется независимо (known_hosts), но в мёртвый
+            // ssh2-хендшейк его не передаём.
+            if (closed) return;
             verify(valid);
           }
         });
@@ -216,7 +230,7 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
     };
     if (sock) connectConfig.sock = sock;
     if (target.authMethod === 'password') {
-      connectConfig.password = secret ?? '';
+      if (secret) connectConfig.password = secret;
     } else {
       connectConfig.privateKey = privateKey;
       if (secret) connectConfig.passphrase = secret;

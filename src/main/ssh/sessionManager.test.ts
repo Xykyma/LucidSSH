@@ -328,6 +328,119 @@ describe('applyHostKeyDecision — Quick Connect (hostId=0)', () => {
 });
 
 /**
+ * PR-1 спеки `.scratch/open-connection/spec.md` (ADR-0017): до выноса
+ * `connection.ts` выравниваем поведение `attemptConnect` на месте — Соединение
+ * отдаётся сессии синхронно, до 'ready', и его смерть до решения по ключу не
+ * должна ни подключиться, ни отправить пароль, ни залить лог ложной сетевой
+ * ошибкой.
+ */
+describe('закрытие вкладки во время промпта отпечатка (PR-1, ADR-0017)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLoadConfig.mockReturnValue(fakeConfig());
+    mockGetSecretForConnection.mockResolvedValue('pw');
+    mockGetHost.mockReturnValue(fakeHost());
+  });
+
+  afterEach(() => {
+    __setClientFactoryForTest(null);
+  });
+
+  it('destroySession во время промпта убивает Client; «Принять» в оставшейся модалке не подключает и не шлёт пароль', async () => {
+    const sentPrompts: HostKeyPrompt[] = [];
+    mockGetMainWindow.mockReturnValue({
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((channel: string, payload: HostKeyPrompt) => {
+          if (channel === IPC.evHostKeyPrompt) sentPrompts.push(payload);
+        })
+      }
+    } as unknown as ReturnType<typeof getMainWindow>);
+
+    const { client, emit } = makeFakeClient();
+    __setClientFactoryForTest(() => client);
+
+    const { sessionId } = await connectHost(1);
+    const mockConnect = vi.mocked(client.connect);
+    await vi.waitFor(() => {
+      if (mockConnect.mock.calls.length === 0) throw new Error('client.connect ещё не вызван');
+    });
+
+    const connectConfig = mockConnect.mock.calls[0]?.[0] as unknown as {
+      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => void;
+    };
+    const verifySpy = vi.fn();
+    connectConfig.hostVerifier(Buffer.from('fake-key'), verifySpy);
+
+    expect(sentPrompts).toHaveLength(1);
+    const requestId = sentPrompts[0]?.requestId;
+    if (!requestId) throw new Error('requestId отсутствует в отправленном prompt');
+
+    destroySession(sessionId);
+    expect(client.destroy).toHaveBeenCalledTimes(1);
+    // Фейковый Client — vi.fn, сам 'close' не эмитит (в отличие от настоящего
+    // ssh2, где destroy() рано или поздно закрывает сокет) — эмитируем вручную,
+    // как и в остальных тестах на этом фейке.
+    emit('close');
+
+    expect(listSessions().find((s) => s.sessionId === sessionId)).toBeUndefined();
+
+    applyHostKeyDecision(requestId, 'accept');
+
+    // Ключ запомнен — это факт о сервере, сверенный пользователем, а не о
+    // вкладке (ADR-0017, «Решение по ключу переживает своё Соединение»).
+    expect(mockAddKnownKey).toHaveBeenCalledWith('10.0.0.5', 22, expect.any(String), expect.any(Buffer));
+    // Но в уже мёртвый Client решение не доходит — ни рукопожатия, ни пароля.
+    expect(verifySpy).not.toHaveBeenCalled();
+    expect(mockStartDashboard).not.toHaveBeenCalled();
+  });
+
+  it('reject отпечатка: в логе clog.hostkeyRejected, без ложной clog.error.*', async () => {
+    const sentPrompts: HostKeyPrompt[] = [];
+    mockGetMainWindow.mockReturnValue({
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((channel: string, payload: HostKeyPrompt) => {
+          if (channel === IPC.evHostKeyPrompt) sentPrompts.push(payload);
+        })
+      }
+    } as unknown as ReturnType<typeof getMainWindow>);
+
+    const { client, emit } = makeFakeClient();
+    __setClientFactoryForTest(() => client);
+
+    const { sessionId } = await connectHost(1);
+    const mockConnect = vi.mocked(client.connect);
+    await vi.waitFor(() => {
+      if (mockConnect.mock.calls.length === 0) throw new Error('client.connect ещё не вызван');
+    });
+
+    const connectConfig = mockConnect.mock.calls[0]?.[0] as unknown as {
+      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => void;
+    };
+    const verifySpy = vi.fn();
+    connectConfig.hostVerifier(Buffer.from('fake-key'), verifySpy);
+
+    expect(sentPrompts).toHaveLength(1);
+    const requestId = sentPrompts[0]?.requestId;
+    if (!requestId) throw new Error('requestId отсутствует в отправленном prompt');
+
+    applyHostKeyDecision(requestId, 'reject');
+    expect(verifySpy).toHaveBeenCalledWith(false);
+
+    // ssh2 сообщает отказ по ключу обычной ошибкой соединения (level
+    // 'handshake', см. ssh2/lib/protocol/kex.js «Host denied»), затем
+    // закрывает Client.
+    emit('error', Object.assign(new Error('Host denied (verification failed)'), { level: 'handshake' }));
+    emit('close');
+
+    const keys = getSessionLog(sessionId).map((e) => e.messageKey);
+    expect(keys).toContain('clog.hostkeyRejected');
+    expect(keys.filter((k) => k.startsWith('clog.error.'))).toHaveLength(0);
+  });
+});
+
+/**
  * Реальное подключение через jump-хост (SSH-05, `.scratch/jump-host-support`,
  * тикет 02). Проверяется внешнее поведение цепочки — порядок хопов, параметры
  * forwardOut, канал-транспорт у целевого Client и различимость ошибок по

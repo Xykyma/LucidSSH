@@ -382,7 +382,21 @@ async function attemptConnect(
     });
 
     let authFailed = false;
+    // Отказ по отпечатку ssh2 сообщает обычной ошибкой соединения (level
+    // 'handshake') — без этого флага она была бы неотличима от «сервер
+    // недоступен», и в «Деталях подключения» после «Подключение отклонено
+    // пользователем» появлялась бы ложная clog.error.socket (см. spec PR-1,
+    // расхождение 2). Решение по ключу (hostKeyDecision.ts) уже записало
+    // свою причину в лог — вторая запись не нужна.
+    let hostKeyRejected = false;
+    // Этот Client уже закрыт — запоздалое решение пользователя по ключу
+    // (закрытие вкладки во время промпта, затем «Принять» в оставшейся
+    // модалке) до ssh2 доводить незачем: known_hosts обновляется независимо
+    // от Client (см. handleHostKey/hostKeyDecision.ts), а отправка пароля в
+    // мёртвый сокет — нет.
+    let clientClosed = false;
     client.on('error', (err: Error & { level?: string }) => {
+      if (hostKeyRejected) return;
       const category =
         err.level === 'client-authentication'
           ? 'auth'
@@ -403,6 +417,7 @@ async function attemptConnect(
     });
 
     client.on('close', () => {
+      clientClosed = true;
       if (isJump) {
         // Bastion закрылся. До 'ready' — это провал всей попытки (ниже общая
         // ветка); после — целевой Client всё равно потеряет свой forwardOut-
@@ -455,7 +470,19 @@ async function attemptConnect(
       keepaliveCountMax: 3,
       tryKeyboard: true,
       hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
-        handleHostKey(session, host, key, verify, opts);
+        handleHostKey(
+          session,
+          host,
+          key,
+          (valid) => {
+            if (!valid) hostKeyRejected = true;
+            // Client уже закрыт (см. объявление clientClosed выше) — в
+            // мёртвый ssh2-хендшейк запоздалое решение не передаём.
+            if (clientClosed) return;
+            verify(valid);
+          },
+          opts
+        );
       }
     };
 
