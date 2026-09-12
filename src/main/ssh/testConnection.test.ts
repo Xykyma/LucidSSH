@@ -158,6 +158,58 @@ describe('testConnection', () => {
     expect(result).toEqual({ ok: false, errorKey: 'clog.error.auth' });
   });
 
+  // PR-1 спеки `.scratch/open-connection/spec.md` (ADR-0017), расхождение 3:
+  // раньше сюда уходила connectConfig.password = '', и сервер получал реальную
+  // попытку входа с пустым паролем (лишняя запись в MaxAuthTries/fail2ban).
+  it('метод password без секрета: пустой пароль не уходит в connect, итог clog.error.auth', async () => {
+    const { client, connect, emit } = makeFakeClient();
+    __setClientFactoryForTest(() => client);
+
+    const promise = testConnection(fakeInput(), undefined);
+    await vi.waitFor(() => {
+      if (connect.mock.calls.length === 0) throw new Error('target.connect ещё не вызван');
+    });
+    const config = connect.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(config['password']).toBeUndefined();
+
+    emit('error', Object.assign(new Error('auth'), { level: 'client-authentication' }));
+    emit('close');
+
+    expect(await promise).toEqual({ ok: false, errorKey: 'clog.error.auth' });
+  });
+
+  // PR-1 (ADR-0017): решение по ключу может прийти после того, как этот Client
+  // уже закрылся (форма/тест закрыты раньше ответа пользователя) — запоздалый
+  // verify не должен доходить до ssh2.
+  it('verify после close своего Client в ssh2 не передаётся', async () => {
+    let capturedVerify: ((valid: boolean) => void) | undefined;
+    mockRequestHostKeyDecision.mockImplementation(({ verify }) => {
+      capturedVerify = verify;
+    });
+
+    const { client, connect, emit } = makeFakeClient();
+    __setClientFactoryForTest(() => client);
+
+    const promise = testConnection(fakeInput(), 'pw');
+    await vi.waitFor(() => {
+      if (connect.mock.calls.length === 0) throw new Error('target.connect ещё не вызван');
+    });
+    const config = connect.mock.calls[0]?.[0] as {
+      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => void;
+    };
+    const verifySpy = vi.fn();
+    config.hostVerifier(Buffer.from('unknown-key'), verifySpy);
+    expect(capturedVerify).toBeDefined();
+
+    // Client закрылся до решения пользователя.
+    emit('close');
+
+    capturedVerify!(true);
+    expect(verifySpy).not.toHaveBeenCalled();
+
+    await promise;
+  });
+
   it('у bastion (пароль) нет сохранённого секрета — отказ без попытки подключения', async () => {
     mockGetHost.mockReturnValue(fakeBastion({ authMethod: 'password' }));
     mockGetSecretForConnection.mockResolvedValue(null);
