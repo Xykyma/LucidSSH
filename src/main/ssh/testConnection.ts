@@ -6,30 +6,31 @@ import { loadConfig } from '../config/store';
 import { loadPrivateKey, PrivateKeyError } from './keys';
 import { getHost } from '../hosts/repository';
 import { getSecretForConnection } from '../keychain';
-import { matchesKnownKey } from './knownHosts';
+import { requestHostKeyDecision, HOSTKEY_DECISION_TIMEOUT_MS } from './hostKeyDecision';
 import { forwardOut } from './forwardOut';
 
 /**
  * Пробное подключение из формы «Новое подключение» (кнопка «Проверить соединение»).
  * Проверяет достижимость сервера и аутентификацию, НЕ создаёт сессию и не
- * передаёт данные — сразу отключается. Ключ в known_hosts не пишется: подтвердить
- * новый отпечаток здесь негде (диалог SSH-03 привязан к сессии), а молча
- * сохранять его нельзя.
- * Секрет живёт только в области видимости этой функции (§9.9 гайда).
+ * передаёт данные — сразу отключается. Секрет живёт только в области
+ * видимости этой функции (§9.9 гайда).
  *
- * Для bastion отпечаток при этом СВЕРЯЕТСЯ с known_hosts (§4: проверка на каждом
- * соединении). Иначе кнопка проверки отдавала бы его сохранённый пароль серверу,
- * подлинность которого не подтверждена ничем, — причём пользователь этот bastion
- * в форме даже не редактирует и подмены не заметит. Незнакомый или изменившийся
- * ключ → отказ (`clog.jump.hostkeyUnknown`), подтвердить его нужно один раз
- * обычным подключением к самому bastion. Для целевого хоста проверки нет и здесь:
- * это поведение старше jump-хостов, менять его — отдельная задача.
+ * Ключ хоста проверяется на ОБОИХ хопах той же политикой, что и в сессии
+ * (ADR-0016, `.scratch/host-key-decision/spec.md` PR-2): совпал с known_hosts —
+ * молча пускаем; незнакомый или изменившийся — промпт SSH-03/04
+ * (`purpose: 'test'`, см. `FingerprintModal`), запись только после accept.
+ * Раньше целевой хост не проверялся вовсе, а bastion — только молча по
+ * `matchesKnownKey`, без возможности подтвердить новый отпечаток отсюда; это
+ * било SEC-03/SSH-07 и роняло тест на только что назначенном jump-хосте,
+ * который ни разу не открывали напрямую (User Story 3).
  *
  * При заданном `proxyJumpHostId` (SSH-05) прогоняет ту же двухэтапную цепочку,
  * что и `sessionManager.ts` (bastion → forwardOut → target), с тем же
  * различением этапа ошибки: провал на bastion возвращается с `step: 'jump'`,
  * чтобы форма могла показать «не удалось подключиться к bastion», а не
- * запутывающее сообщение про целевой хост.
+ * запутывающее сообщение про целевой хост. Отказ по отпечатку bastion остаётся
+ * `clog.jump.hostkeyUnknown` (тот же ключ, что и раньше); у целевого хоста —
+ * свой `clog.error.hostkeyRejected`, не про jump.
  *
  * `hostId` — id редактируемого хоста (undefined при создании нового), нужен
  * только для проверки self-reference (см. sessionManager.ts —
@@ -73,7 +74,7 @@ export async function testConnection(
 
     const jumpResult = await connectOnce(bastion, {
       secret: bastionSecret,
-      requireKnownHostKey: true
+      role: 'jump'
     });
     if (!jumpResult.ok) return { ok: false, errorKey: jumpResult.errorKey, step: 'jump' };
     jumpClient = jumpResult.client;
@@ -88,7 +89,7 @@ export async function testConnection(
     }
   }
 
-  const targetResult = await connectOnce(input, { secret, sock });
+  const targetResult = await connectOnce(input, { secret, sock, role: 'target' });
   jumpClient?.end();
   if (!targetResult.ok) return { ok: false, errorKey: targetResult.errorKey };
   targetResult.client.end();
@@ -99,6 +100,7 @@ export async function testConnection(
  *  хоста (`HostInput`) и bastion (`Host`, у него есть лишние поля, но они
  *  совместимы структурно). */
 interface ConnectTarget {
+  name: string;
   address: string;
   port: number;
   username: string;
@@ -109,13 +111,13 @@ interface ConnectTarget {
 type ConnectOnceResult = { ok: true; client: Client } | { ok: false; errorKey: string };
 
 /** Чем один хоп цепочки отличается от другого: свой секрет, транспорт (готовый
- *  канал у целевого хоста, прямой TCP у bastion) и требование сверить отпечаток. */
+ *  канал у целевого хоста, прямой TCP у bastion) и роль — какой errorKey и
+ *  `step` использовать при отказе по отпечатку (см. connectOnce). */
 interface HopOptions {
   secret: string | undefined;
   /** Канал через bastion — для целевого хоста цепочки. */
   sock?: ClientChannel;
-  /** Отказать, если ключ сервера не совпал с known_hosts (bastion, см. шапку). */
-  requireKnownHostKey?: boolean;
+  role: 'target' | 'jump';
 }
 
 /** Один хоп тестового подключения: ready/error/close → результат, без побочных
@@ -164,13 +166,14 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
 
     // Отказ по отпечатку ssh2 сообщает обычной ошибкой соединения — без этого
     // флага он был бы неотличим от «сервер недоступен», и пользователь чинил бы
-    // сеть вместо того, чтобы подтвердить ключ bastion.
+    // сеть вместо того, чтобы подтвердить ключ (SSH-03/04).
     let hostKeyRejected = false;
+    const hostKeyRejectedErrorKey = opts.role === 'jump' ? 'clog.jump.hostkeyUnknown' : 'clog.error.hostkeyRejected';
 
     client.on('ready', () => settle({ ok: true, client }));
     client.on('error', (err: Error & { level?: string }) => {
       if (hostKeyRejected) {
-        settle({ ok: false, errorKey: 'clog.jump.hostkeyUnknown' });
+        settle({ ok: false, errorKey: hostKeyRejectedErrorKey });
         return;
       }
       const category =
@@ -184,7 +187,7 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
     client.on('close', () =>
       settle({
         ok: false,
-        errorKey: hostKeyRejected ? 'clog.jump.hostkeyUnknown' : 'clog.error.socket'
+        errorKey: hostKeyRejected ? hostKeyRejectedErrorKey : 'clog.error.socket'
       })
     );
 
@@ -192,18 +195,24 @@ function connectOnce(target: ConnectTarget, opts: HopOptions): Promise<ConnectOn
       host: target.address,
       port: target.port,
       username: target.username,
-      readyTimeout: cfg.connection.connectTimeoutSec * 1000,
+      // readyTimeout охватывает весь путь до 'ready', включая ожидание решения
+      // пользователя по fingerprint в hostVerifier (см. sessionManager.ts) —
+      // без этого слагаемого честная сверка отпечатка роняла бы тест таймаутом.
+      readyTimeout: cfg.connection.connectTimeoutSec * 1000 + HOSTKEY_DECISION_TIMEOUT_MS,
       tryKeyboard: true,
-      // ssh2 принимает и синхронный ответ, и колбэк; здесь везде синхронный.
-      hostVerifier: opts.requireKnownHostKey
-        ? (key: Buffer): boolean => {
-            // Подтвердить новый отпечаток здесь негде, поэтому единственный
-            // безопасный ответ — пускать только уже известный ключ.
-            const ok = matchesKnownKey(target.address, target.port, key);
-            if (!ok) hostKeyRejected = true;
-            return ok;
+      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
+        requestHostKeyDecision({
+          hostName: target.name,
+          address: target.address,
+          port: target.port,
+          rawKey: key,
+          purpose: 'test',
+          verify: (valid) => {
+            if (!valid) hostKeyRejected = true;
+            verify(valid);
           }
-        : () => true // целевой хост: поведение старше jump-хостов, см. шапку
+        });
+      }
     };
     if (sock) connectConfig.sock = sock;
     if (target.authMethod === 'password') {

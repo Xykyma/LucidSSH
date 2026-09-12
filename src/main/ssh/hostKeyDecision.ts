@@ -8,9 +8,10 @@ import { addKnownKey, findKnownKey, keyTypeFromBlob, replaceKnownKey, sha256Fing
  * Доверие ключу хоста — одно решение на каждое Соединение (ADR-0016,
  * `.scratch/host-key-decision/spec.md`). Раньше это была внутренность
  * `sessionManager` (карта `pendingHostKeys`, `handleHostKey`, `confirmHostKey`);
- * вынесено в свой модуль, чтобы им мог пользоваться и `testConnection.ts`
- * (PR-2), не таща доступ к живым Сессиям — этот модуль ничего о них не знает,
- * его зависимости — только `knownHosts` и `emit`.
+ * вынесено в свой модуль, которым пользуется и `sessionManager.ts` (purpose
+ * 'session'), и `testConnection.ts` (purpose 'test', оба хопа цепочки через
+ * jump-хост) — не таща доступ к живым Сессиям: этот модуль ничего о них не
+ * знает, его зависимости — только `knownHosts` и `emit`.
  *
  * Единственное, что раньше требовало живую Сессию — запись в лог соединения.
  * Здесь это необязательный логгер, переданный при запросе решения: сам факт
@@ -29,13 +30,15 @@ export type HostKeyDecisionLogger = (
 ) => void;
 
 export interface RequestHostKeyDecisionParams {
-  hostId: number;
   hostName: string;
   address: string;
   port: number;
   rawKey: Buffer;
   verify: (valid: boolean) => void;
   logger?: HostKeyDecisionLogger;
+  /** Зачем спрашивается решение — прокидывается в промпт как есть, см.
+   *  `HostKeyPrompt.purpose`. */
+  purpose: 'session' | 'test';
 }
 
 interface PendingDecision {
@@ -58,7 +61,7 @@ const pending = new Map<string, PendingDecision>();
  * (accept/reject/таймаут).
  */
 export function requestHostKeyDecision(params: RequestHostKeyDecisionParams): void {
-  const { hostId, hostName, address, port, rawKey, verify, logger } = params;
+  const { hostName, address, port, rawKey, verify, logger, purpose } = params;
   const keyType = keyTypeFromBlob(rawKey);
   const fingerprint = sha256Fingerprint(rawKey);
   logger?.('info', 'clog.hostkeyReceived', { keyType, fingerprint });
@@ -97,13 +100,13 @@ export function requestHostKeyDecision(params: RequestHostKeyDecisionParams): vo
 
   const prompt: HostKeyPrompt = {
     requestId,
-    hostId,
     hostName,
     address,
     port,
     fingerprintSha256: fingerprint,
     isChanged,
-    previousFingerprint: known ? sha256Fingerprint(Buffer.from(known.keyBase64, 'base64')) : undefined
+    previousFingerprint: known ? sha256Fingerprint(Buffer.from(known.keyBase64, 'base64')) : undefined,
+    purpose
   };
   emit(IPC.evHostKeyPrompt, prompt);
 }

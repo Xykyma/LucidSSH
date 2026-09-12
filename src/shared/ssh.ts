@@ -16,13 +16,17 @@ export interface SessionInfo {
 
 export interface HostKeyPrompt {
   requestId: string;
-  hostId: number;
   hostName: string;
   address: string;
   port: number;
   fingerprintSha256: string;
   isChanged: boolean; // true → ключ изменился, соединение заблокировано (SSH-04)
   previousFingerprint?: string;
+  /** Зачем подняли промпт — влияет только на подписи кнопок (модалка одна и та
+   *  же для обоих поводов): 'session' — реальное подключение, 'test' — кнопка
+   *  «Проверить соединение» (ADR-0016), где после accept подключение не
+   *  продолжается, поэтому «…и подключиться» в кнопке было бы неправдой. */
+  purpose: 'session' | 'test';
 }
 
 /**

@@ -44,12 +44,12 @@ describe('hostKeyDecision', () => {
     const verify = vi.fn();
 
     requestHostKeyDecision({
-      hostId: 1,
       hostName: 'web-01',
       address: '10.0.0.5',
       port: 22,
       rawKey,
-      verify
+      verify,
+      purpose: 'session'
     });
 
     expect(verify).toHaveBeenCalledWith(true);
@@ -62,12 +62,12 @@ describe('hostKeyDecision', () => {
     const verify = vi.fn();
 
     requestHostKeyDecision({
-      hostId: 1,
       hostName: 'web-01',
       address: '10.0.0.5',
       port: 22,
       rawKey,
-      verify
+      verify,
+      purpose: 'session'
     });
 
     expect(mockEmit).toHaveBeenCalledTimes(1);
@@ -87,12 +87,12 @@ describe('hostKeyDecision', () => {
     const verify = vi.fn();
 
     requestHostKeyDecision({
-      hostId: 1,
       hostName: 'web-01',
       address: '10.0.0.5',
       port: 22,
       rawKey,
-      verify
+      verify,
+      purpose: 'session'
     });
 
     applyHostKeyDecision(lastRequestId(), 'reject');
@@ -107,12 +107,12 @@ describe('hostKeyDecision', () => {
     const verify = vi.fn();
 
     requestHostKeyDecision({
-      hostId: 1,
       hostName: 'web-01',
       address: '10.0.0.5',
       port: 22,
       rawKey,
-      verify
+      verify,
+      purpose: 'session'
     });
 
     const prompt = mockEmit.mock.calls[0]?.[1] as { isChanged: boolean; previousFingerprint?: string };
@@ -131,12 +131,12 @@ describe('hostKeyDecision', () => {
     const verify = vi.fn();
 
     requestHostKeyDecision({
-      hostId: 1,
       hostName: 'web-01',
       address: '10.0.0.5',
       port: 22,
       rawKey,
-      verify
+      verify,
+      purpose: 'session'
     });
 
     applyHostKeyDecision(lastRequestId(), 'reject');
@@ -152,12 +152,12 @@ describe('hostKeyDecision', () => {
     const verify = vi.fn();
 
     requestHostKeyDecision({
-      hostId: 1,
       hostName: 'web-01',
       address: '10.0.0.5',
       port: 22,
       rawKey,
-      verify
+      verify,
+      purpose: 'session'
     });
 
     vi.advanceTimersByTime(HOSTKEY_DECISION_TIMEOUT_MS);
@@ -183,12 +183,12 @@ describe('hostKeyDecision', () => {
     // Без поля logger — как вызывает testConnection.ts (PR-2) и как ведёт себя
     // decision после того, как Сессия уже закрылась.
     requestHostKeyDecision({
-      hostId: 0,
       hostName: 'quick@10.0.0.9',
       address: '10.0.0.9',
       port: 22,
       rawKey,
-      verify
+      verify,
+      purpose: 'test'
     });
 
     expect(() => applyHostKeyDecision(lastRequestId(), 'accept')).not.toThrow();
