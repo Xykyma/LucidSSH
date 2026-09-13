@@ -124,11 +124,13 @@ At this stage, releases are created manually.
 ### 6.1 Sequence
 
 1. Bump the version number in `package.json`.
-2. Update the release notes.
+2. Update the release notes — there are two, prepared in the same version-bump commit, before the build:
+   - the GitHub Release description (markdown, with the installer's SHA-256 and a note about the SmartScreen warning) — shown on the release page only;
+   - `build/release-notes.md` (plain text, `## RU`/`## EN` sections) — picked up by `electron-builder` into `latest.yml`'s `releaseNotes` field and shown in the app's Settings → About card by the installed previous version.
 3. Run tests and a production build.
-4. Build the NSIS installer and the portable ZIP via `electron-builder`.
-5. Sign the executables with a code-signing certificate (if available — see §9).
-6. Verify the digital signature and timestamp (if applicable).
+4. Build the NSIS installer and the portable ZIP via `electron-builder --publish never` (publishing is a separate manual step — see §6.2).
+5. Sign the executables with a code-signing certificate — **N/A, unsigned release (see §9)**.
+6. Verify the digital signature and timestamp — **N/A, unsigned release (see §9)**.
 7. Install the new version on a clean test system.
 8. Verify updating from the previous stable version.
 9. Verify that hosts, history, settings, and private-key references survive.
