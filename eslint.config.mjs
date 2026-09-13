@@ -91,5 +91,33 @@ export default tseslint.config(
         }
       ]
     }
+  },
+  {
+    // ADR-0008 (docs/agent/adr/0008-guard-seam-at-ipc-boundary.md) + ADR-0018:
+    // запись в SSH-канал мимо Стража. Единственный законный вызывающий
+    // sendInput/sendCommandLine — guard/manager.ts; тест канала
+    // (src/main/ipc/boundary.test.ts, «пункт 2») ловит «IPC не дошёл до
+    // Стража», это правило — «кто-то в main пишет в провод сам».
+    // Проверено на ESLint 10.6: `import * as sm from '../ssh/sessionManager'`
+    // тоже ловится (весь namespace-импорт помечается ошибкой, даже без
+    // обращения к sm.sendInput) — второе правило не нужно. Не видит только
+    // динамический import()/require — остаток компромисса ADR-0008.
+    files: ['src/main/**/*.ts'],
+    ignores: ['src/main/guard/manager.ts', 'src/main/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/sessionManager'],
+              importNames: ['sendInput', 'sendCommandLine'],
+              message:
+                'sendInput/sendCommandLine пишут в SSH-канал без Стража — зовите submitCommand/submitRawInput из guard/manager (ADR-0008).'
+            }
+          ]
+        }
+      ]
+    }
   }
 );
