@@ -70,5 +70,22 @@ describe('parseReleaseNotes', () => {
       const noSections = '<p><strong>Приложение</strong> без цифровой подписи &amp; SmartScreen.</p>';
       expect(parseReleaseNotes(noSections, 'ru')).toEqual(['Приложение без цифровой подписи & SmartScreen.']);
     });
+
+    it('числовая сущность вне диапазона Unicode остаётся как есть, а не роняет разбор', () => {
+      const badEntity = ['<h2>RU</h2>', '<ul>', '<li>a &#x110000; b &#1114112; c</li>', '</ul>'].join('\n');
+      expect(parseReleaseNotes(badEntity, 'ru')).toEqual(['a &#x110000; b &#1114112; c']);
+    });
+  });
+
+  describe('угловые скобки в обычном тексте — не HTML', () => {
+    it('markdown с плейсхолдерами <host>/<path> разбирается по секциям, скобки сохраняются', () => {
+      const md = ['## RU', '- Подключение: ssh user@<host>', '- Удаление <path> спрашивает имя', '', '## EN', '- Connect: ssh user@<host>'].join('\n');
+      expect(parseReleaseNotes(md, 'ru')).toEqual(['Подключение: ssh user@<host>', 'Удаление <path> спрашивает имя']);
+      expect(parseReleaseNotes(md, 'en')).toEqual(['Connect: ssh user@<host>']);
+    });
+
+    it('текст без секций с <host> возвращается одним пунктом без вырезания', () => {
+      expect(parseReleaseNotes('ssh user@<host> теперь работает', 'ru')).toEqual(['ssh user@<host> теперь работает']);
+    });
   });
 });
