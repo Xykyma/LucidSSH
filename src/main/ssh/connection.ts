@@ -1,4 +1,5 @@
 import { Client, type ClientChannel } from 'ssh2';
+import type { ConnectionPurpose } from '@shared/ssh';
 import { loadConfig } from '../config/store';
 import { requestHostKeyDecision, HOSTKEY_DECISION_TIMEOUT_MS, type HostKeyDecisionLogger } from './hostKeyDecision';
 
@@ -61,7 +62,7 @@ export type ConnectionCredentials =
 
 export interface OpenConnectionOptions {
   /** Как есть в requestHostKeyDecision — прокидывается в промпт (см. HostKeyPrompt.purpose). */
-  purpose: 'session' | 'test';
+  purpose: ConnectionPurpose;
   /** Как есть в requestHostKeyDecision — необязательный, решение по ключу работает и без лога. */
   logger?: HostKeyDecisionLogger;
   /** Канал через bastion (SSH-05) — используется вместо собственного TCP ssh2. */
@@ -71,12 +72,14 @@ export interface OpenConnectionOptions {
 }
 
 export type ConnectionFailure = 'auth' | 'timeout' | 'socket' | 'hostkey-rejected';
+/** Причина из ошибки ssh2 — всё, кроме отказа по ключу: его знает только `hostVerifier`. */
+export type ConnectionErrorCategory = Exclude<ConnectionFailure, 'hostkey-rejected'>;
 export type ConnectionOutcome = { ok: true } | { ok: false; reason: ConnectionFailure };
 
 /** Перевод `err.level` ssh2 в причину — используется и здесь, и вызывающими
  *  для ошибок ПОСЛЕ `ready` (решение 10 спеки), чтобы категоризация не
  *  раздвоилась снова, как до PR-1. */
-export function classifyConnectionError(err: Error & { level?: string }): 'auth' | 'timeout' | 'socket' {
+export function classifyConnectionError(err: Error & { level?: string }): ConnectionErrorCategory {
   return err.level === 'client-authentication' ? 'auth' : err.level === 'client-timeout' ? 'timeout' : 'socket';
 }
 
@@ -104,7 +107,7 @@ export function openConnection(
   let hostkeyRejected = false;
   let connectionClosed = false;
   let sawAuthError = false;
-  let firstErrorCategory: 'auth' | 'timeout' | 'socket' | undefined;
+  let firstErrorCategory: ConnectionErrorCategory | undefined;
 
   const outcome = new Promise<ConnectionOutcome>((resolve) => {
     const settle = (o: ConnectionOutcome): void => {

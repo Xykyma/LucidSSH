@@ -14,6 +14,10 @@ export interface SessionInfo {
   busyCommand: string | null;
 }
 
+/** Зачем открывается Соединение (ADR-0016): 'session' — вкладка с Сессией,
+ *  'test' — кнопка «Проверить соединение» в форме хоста. */
+export type ConnectionPurpose = 'session' | 'test';
+
 export interface HostKeyPrompt {
   requestId: string;
   hostName: string;
@@ -26,7 +30,7 @@ export interface HostKeyPrompt {
    *  же для обоих поводов): 'session' — реальное подключение, 'test' — кнопка
    *  «Проверить соединение» (ADR-0016), где после accept подключение не
    *  продолжается, поэтому «…и подключиться» в кнопке было бы неправдой. */
-  purpose: 'session' | 'test';
+  purpose: ConnectionPurpose;
 }
 
 /**
