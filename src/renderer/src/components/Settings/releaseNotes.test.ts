@@ -33,4 +33,42 @@ describe('parseReleaseNotes', () => {
     expect(parseReleaseNotes(undefined, 'ru')).toEqual([]);
     expect(parseReleaseNotes('', 'ru')).toEqual([]);
   });
+
+  describe('HTML из atom-ленты GitHub (без releaseNotes в latest.yml)', () => {
+    const html = [
+      '<p><strong>Приложение распространяется без цифровой подписи.</strong> …</p>',
+      '<hr>',
+      '<h2>RU</h2>',
+      '<ul>',
+      '<li><strong>Безопасность:</strong> кнопка «Проверить соединение» …</li>',
+      '<li>Страж … (<code>rm -rf /var/www &amp;&amp; rm -rf /etc</code>) …</li>',
+      '</ul>',
+      '<h2>EN</h2>',
+      '<ul>',
+      '<li>Security: &quot;Test connection&quot; button …</li>',
+      '<li>Guard … (<code>rm -rf /var/www &amp;&amp; rm -rf /etc</code>) …</li>',
+      '</ul>',
+    ].join('\n');
+
+    it('возвращает пункты нужного языка без тегов, с декодированными сущностями', () => {
+      expect(parseReleaseNotes(html, 'ru')).toEqual([
+        'Безопасность: кнопка «Проверить соединение» …',
+        'Страж … (rm -rf /var/www && rm -rf /etc) …',
+      ]);
+      expect(parseReleaseNotes(html, 'en')).toEqual([
+        'Security: "Test connection" button …',
+        'Guard … (rm -rf /var/www && rm -rf /etc) …',
+      ]);
+    });
+
+    it('падает обратно на другой язык, если в HTML только одна секция', () => {
+      const enOnlyHtml = ['<h2>EN</h2>', '<ul>', '<li>Fixed connection bug</li>', '</ul>'].join('\n');
+      expect(parseReleaseNotes(enOnlyHtml, 'ru')).toEqual(['Fixed connection bug']);
+    });
+
+    it('HTML без <h2>-разделов даёт один пункт без тегов', () => {
+      const noSections = '<p><strong>Приложение</strong> без цифровой подписи &amp; SmartScreen.</p>';
+      expect(parseReleaseNotes(noSections, 'ru')).toEqual(['Приложение без цифровой подписи & SmartScreen.']);
+    });
+  });
 });
