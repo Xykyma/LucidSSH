@@ -523,6 +523,13 @@
     "delete": "Delete entry",
     "clear": "Clear history",
     "clearHost": "Clear host history",
+    "filterQuickConnect": "Quick Connect",
+    "clearQuickConnect": "Clear Quick Connect history",
+    "clearQuickConnectConfirm": {
+      "title": "Clear Quick Connect history?",
+      "body_one": "{{count}} command history entry from Quick Connect sessions — across every server you connected to this way — will be permanently deleted. Saved hosts' entries are not affected. This action cannot be undone.",
+      "body_other": "{{count}} command history entries from Quick Connect sessions — across every server you connected to this way — will be permanently deleted. Saved hosts' entries are not affected. This action cannot be undone."
+    },
     "clearConfirm": {
       "title": "Clear all history?",
       "body": "All {{total}} command history entries will be permanently deleted. This action cannot be undone.",
