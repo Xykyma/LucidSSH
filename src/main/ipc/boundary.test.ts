@@ -647,6 +647,77 @@ describe('пункт 4 — сортировка только в пределах
   });
 });
 
+describe('пункт 5 — allow-list configUpdate', () => {
+  const mockSaveConfig = vi.mocked(configStoreModule.saveConfig);
+
+  it.each(['foo', 'language', 'pendingKeyDeployments', 42, null])(
+    'путь %p — не в allow-list, отказ, saveConfig не вызван',
+    async (rawPath) => {
+      const result = await invoke(IPC.configUpdate, mainEvent(), rawPath, 14);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(IpcValidationError);
+      expect((result.error as IpcValidationError).message).toBe('path: unknown setting');
+      expect(mockSaveConfig).not.toHaveBeenCalled();
+    }
+  );
+
+  // Живой дефект (spec.md): `rawPath in WRITABLE` смотрит цепочку прототипа.
+  // До fix (config.ts:82, `in` → `Object.hasOwn`) эти четыре ключа наследуются
+  // от Object.prototype как ФУНКЦИИ — allow-list их пропускает, сеттер
+  // вызывается как WRITABLE[key](value, cfg) (т.е. Object.prototype.toString и
+  // т.п. с левым this), ничего не мутирует, не бросает — и updateConfig всё
+  // равно доходит до saveConfig(). Эти четыре кейса КРАСНЫЕ до fix.
+  it.each(['toString', 'constructor', 'hasOwnProperty', 'valueOf'])(
+    'ключ прототипа %p — отказ IpcValidationError, saveConfig не вызван (красный до fix)',
+    async (rawPath) => {
+      const result = await invoke(IPC.configUpdate, mainEvent(), rawPath, 14);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(IpcValidationError);
+      expect((result.error as IpcValidationError).message).toBe('path: unknown setting');
+      expect(mockSaveConfig).not.toHaveBeenCalled();
+    }
+  );
+
+  // `__proto__` — не собственное свойство и не функция: тот же WRITABLE[key]
+  // возвращает Object.prototype, вызов `setter(...)` бросает TypeError ДО
+  // saveConfig(). До fix — некатегоризированная ошибка, не IpcValidationError:
+  // тоже красный кейс.
+  it('__proto__ — отказ IpcValidationError, saveConfig не вызван (красный до fix)', async () => {
+    const result = await invoke(IPC.configUpdate, mainEvent(), '__proto__', 14);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(IpcValidationError);
+    expect((result.error as IpcValidationError).message).toBe('path: unknown setting');
+    expect(mockSaveConfig).not.toHaveBeenCalled();
+  });
+
+  it('значение вне диапазона (terminal.fontSize=100) — отказ, saveConfig не вызван', async () => {
+    const result = await invoke(IPC.configUpdate, mainEvent(), 'terminal.fontSize', 100);
+    expect(result.ok).toBe(false);
+    expect(mockSaveConfig).not.toHaveBeenCalled();
+  });
+
+  it('значение не того типа (ui.expertMode="yes") — отказ, saveConfig не вызван', async () => {
+    const result = await invoke(IPC.configUpdate, mainEvent(), 'ui.expertMode', 'yes');
+    expect(result.ok).toBe(false);
+    expect(mockSaveConfig).not.toHaveBeenCalled();
+  });
+
+  it('valid path/value (terminal.fontSize=14) — saveConfig вызван, ответ содержит новое значение (контроль)', async () => {
+    const result = await invoke(IPC.configUpdate, mainEvent(), 'terminal.fontSize', 14);
+
+    expect(mockSaveConfig).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.value as { terminal: { fontSize: number } }).terminal.fontSize).toBe(14);
+  });
+});
+
 describe('пункт 6 — hostCreate/hostUpdate не пишут при отказе', () => {
   const mockGroupExists = vi.mocked(hostsRepositoryModule.groupExists);
   const mockCheckJumpHost = vi.mocked(hostsRepositoryModule.checkJumpHost);
