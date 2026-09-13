@@ -9,6 +9,8 @@ import { Icon } from '@/components/common/Icon';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
+import { resolveClearTarget, showsSessionChip, type HostFilter } from './historyHostFilter';
 
 /**
  * Панель истории команд (HistoryDrawer, Design_Brief §3.5; скриншот 06).
@@ -35,7 +37,7 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState('');
-  const [hostFilter, setHostFilter] = useState<number | 'all' | 'session'>('all');
+  const [hostFilter, setHostFilter] = useState<HostFilter>('all');
   const [noteEditing, setNoteEditing] = useState<number | null>(null);
   const [noteText, setNoteText] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -43,37 +45,34 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
   const [clearHostCount, setClearHostCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // hostFilter 'session' резолвится в activeHostId — фильтр «эта сессия» тоже
-  // очищает по хосту, а не всё сразу (HIST-08). activeHostId=0 — Быстрое
-  // подключение (HM-11): валидный хост для очистки, не «фильтр не задан»,
-  // поэтому сравнение строго с 'all'/'session', а не truthy-проверка.
-  const clearTargetHostId =
-    hostFilter === 'all' ? undefined : hostFilter === 'session' ? activeHostId : hostFilter;
+  // «Эта сессия» очищает по хосту активной сессии, а не всё сразу (HIST-08);
+  // Быстрое подключение — отдельная цель, не «хост» (см. historyHostFilter.ts).
+  const clearTarget = resolveClearTarget(hostFilter, activeHostId);
 
   const openClearConfirm = async (): Promise<void> => {
-    // hostFilter указывал на «эту сессию», но активная сессия с тех пор
-    // пропала (сессия закрылась, пока дровер оставался открытым) — не
-    // подставляем случайно «очистить всё», а тихо возвращаемся к «Все».
-    if (hostFilter !== 'all' && clearTargetHostId === undefined) {
+    // «Эта сессия» указывала на сессию, которая с тех пор пропала (закрылась,
+    // пока дровер оставался открытым) — не подставляем случайно «очистить
+    // всё», а тихо возвращаемся к «Все».
+    if (clearTarget.kind === 'stale') {
       setHostFilter('all');
       return;
     }
-    if (clearTargetHostId !== undefined) {
-      setClearHostCount(await window.lucidSSH.historyCountForHost(clearTargetHostId));
+    if (clearTarget.kind !== 'all') {
+      setClearHostCount(await window.lucidSSH.historyCountForHost(clearTarget.hostId));
     }
     setClearConfirmOpen(true);
   };
 
   const clearAll = async (): Promise<void> => {
-    if (clearTargetHostId !== undefined) {
-      await window.lucidSSH.clearHistoryForHost(clearTargetHostId);
+    if (clearTarget.kind === 'host' || clearTarget.kind === 'quickConnect') {
+      await window.lucidSSH.clearHistoryForHost(clearTarget.hostId);
       setHostFilter('all');
-    } else if (hostFilter === 'all') {
+    } else if (clearTarget.kind === 'all') {
       await window.lucidSSH.clearHistory();
     }
-    // hostFilter !== 'all' здесь означало бы, что цель хоста пропала между
-    // открытием диалога и подтверждением (см. openClearConfirm) — ничего не
-    // делаем, а не откатываемся к полной очистке.
+    // 'stale' здесь означало бы, что цель пропала между открытием диалога и
+    // подтверждением (см. openClearConfirm) — ничего не делаем, а не
+    // откатываемся к полной очистке.
     setClearConfirmOpen(false);
     refreshHistory();
   };
@@ -102,8 +101,28 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
 
   const hostChips = [...hostNamesRef.current.entries()];
 
+  // Подписи кнопки и диалога очистки — по цели (HIST-08). 'stale' диалог не
+  // открывает (см. openClearConfirm), поэтому ему достаются подписи «Все».
   const clearTargetHostName =
-    clearTargetHostId !== undefined ? hostNamesRef.current.get(clearTargetHostId) : undefined;
+    clearTarget.kind === 'host' ? (hostNamesRef.current.get(clearTarget.hostId) ?? '') : '';
+  const clearCopy =
+    clearTarget.kind === 'host'
+      ? {
+          button: t('history.clearHost'),
+          title: t('history.clearHostConfirm.title', { host: clearTargetHostName }),
+          body: t('history.clearHostConfirm.body', { host: clearTargetHostName, count: clearHostCount })
+        }
+      : clearTarget.kind === 'quickConnect'
+        ? {
+            button: t('history.clearQuickConnect'),
+            title: t('history.clearQuickConnectConfirm.title'),
+            body: t('history.clearQuickConnectConfirm.body', { count: clearHostCount })
+          }
+        : {
+            button: t('history.clear'),
+            title: t('history.clearConfirm.title'),
+            body: t('history.clearConfirm.body', { total })
+          };
 
   const visible = useMemo(
     () =>
@@ -181,10 +200,10 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
             </Chip>
             {hostChips.map(([id, name]) => (
               <Chip key={id} active={hostFilter === id} onClick={() => setHostFilter(id)}>
-                {name}
+                {id === QUICK_CONNECT_HOST_ID ? t('history.filterQuickConnect') : name}
               </Chip>
             ))}
-            {activeHostId !== undefined && (
+            {showsSessionChip(activeHostId) && (
               <Chip active={hostFilter === 'session'} onClick={() => setHostFilter('session')}>
                 {t('history.filterSession')}
               </Chip>
@@ -376,7 +395,7 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
               className="flex items-center gap-1 rounded-[4px] px-2 py-1 text-[11.5px] text-text-dim hover:bg-danger/10 hover:text-danger"
             >
               <Icon name="trash" size={12} />
-              {clearTargetHostId !== undefined ? t('history.clearHost') : t('history.clear')}
+              {clearCopy.button}
             </button>
           )}
         </div>
@@ -384,22 +403,13 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
 
       {clearConfirmOpen && (
         <ConfirmDialog
-          title={
-            clearTargetHostId !== undefined
-              ? t('history.clearHostConfirm.title', { host: clearTargetHostName ?? '' })
-              : t('history.clearConfirm.title')
-          }
+          title={clearCopy.title}
           confirmLabel={t('history.clearConfirm.confirm')}
           danger
           onConfirm={() => void clearAll()}
           onCancel={() => setClearConfirmOpen(false)}
         >
-          {clearTargetHostId !== undefined
-            ? t('history.clearHostConfirm.body', {
-                host: clearTargetHostName ?? '',
-                count: clearHostCount
-              })
-            : t('history.clearConfirm.body', { total })}
+          {clearCopy.body}
         </ConfirmDialog>
       )}
     </div>

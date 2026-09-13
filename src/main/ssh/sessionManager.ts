@@ -3,6 +3,7 @@ import type { ClientChannel } from 'ssh2';
 import type { ConnectionLogEntry, SessionStatus } from '@shared/ssh';
 import { IPC } from '@shared/ipc';
 import type { Host } from '@shared/hosts';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
 import { getHost } from '../hosts/repository';
 import { getSecretForConnection } from '../keychain';
 import { loadConfig } from '../config/store';
@@ -221,7 +222,7 @@ export async function connectQuickHost(
 
   const session: ManagedSession = {
     id: randomUUID(),
-    hostId: 0,
+    hostId: QUICK_CONNECT_HOST_ID,
     hostName: host.name,
     client: null,
     jumpClient: null,
@@ -436,11 +437,15 @@ function attachPostReadyLifecycle(session: ManagedSession, connection: Connectio
     }
     // HM-11: Quick Connect (hostId=0) не переподключается автоматически —
     // хост нигде не сохранён, getHost(0) всегда null, реконнектить нечем.
-    if (session.hostId !== 0 && session.status === 'connected' && loadConfig().connection.autoreconnect) {
+    if (
+      session.hostId !== QUICK_CONNECT_HOST_ID &&
+      session.status === 'connected' &&
+      loadConfig().connection.autoreconnect
+    ) {
       scheduleReconnect(session);
       return;
     }
-    if (session.hostId !== 0 && session.status === 'reconnecting') {
+    if (session.hostId !== QUICK_CONNECT_HOST_ID && session.status === 'reconnecting') {
       scheduleReconnect(session);
       return;
     }

@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { useTranslation } from 'react-i18next';
 import type { CatalogCommand, CommandsDatabase } from '@shared/content';
 import type { Snippet } from '@shared/history';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
 import { insertIntoComposer } from '@/stores/composerBus';
 import { useSessions } from '@/stores/sessions';
 import { usePanels } from '@/stores/panels';
@@ -59,7 +60,7 @@ export const CatalogPanel = forwardRef<HTMLElement, { width: number; onClose: ()
     // Серверная область есть только у сессии с сохранённым хостом: hostId=0 —
     // Быстрое подключение (HM-11), записи в hosts нет, серверных сниппетов
     // быть не может (SnippetSaveDialog запрещает их создание).
-    const hostScope = active && active.hostId !== 0 ? active : null;
+    const hostScope = active && active.hostId !== QUICK_CONNECT_HOST_ID ? active : null;
 
     // Если активный хост исчез, а открыта его вкладка — вернуться к каталогу
     useEffect(() => {

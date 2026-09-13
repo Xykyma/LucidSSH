@@ -1,4 +1,5 @@
 import type { AuthMethod, HostInput } from '@shared/hosts';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
 import { IpcValidationError } from '../ipc/validate';
 
 /**
@@ -134,6 +135,18 @@ export function validateId(v: unknown, name = 'id'): number {
  * обычную строгую проверку validateId.
  */
 export function validateOptionalHostId(v: unknown, name = 'hostId'): number | undefined {
-  if (v === undefined || v === null || v === 0) return undefined;
+  if (v === undefined || v === null || v === QUICK_CONNECT_HOST_ID) return undefined;
+  return validateId(v, name);
+}
+
+/**
+ * hostId операции над историей одного хоста (HIST-08): сохранённый хост или
+ * сентинел Быстрого подключения. В отличие от validateOptionalHostId, здесь
+ * сентинел — настоящая цель, а не «контекста нет»: у сессий быстрого
+ * подключения есть свои записи в `history` (host_id=0), и их очищают
+ * отдельным чипом, хотя строки в `hosts` нет.
+ */
+export function validateHistoryHostId(v: unknown, name = 'hostId'): number {
+  if (v === QUICK_CONNECT_HOST_ID) return QUICK_CONNECT_HOST_ID;
   return validateId(v, name);
 }

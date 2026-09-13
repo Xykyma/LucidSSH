@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ConnectionLogEntry, HostKeyPrompt } from '@shared/ssh';
+import type { ConnectionLogEntry, ConnectionPurpose, HostKeyPrompt } from '@shared/ssh';
 import { IPC } from '@shared/ipc';
 import { emit } from '../ipc/events';
 import { addKnownKey, findKnownKey, keyTypeFromBlob, replaceKnownKey, sha256Fingerprint } from './knownHosts';
@@ -38,7 +38,7 @@ export interface RequestHostKeyDecisionParams {
   logger?: HostKeyDecisionLogger;
   /** Зачем спрашивается решение — прокидывается в промпт как есть, см.
    *  `HostKeyPrompt.purpose`. */
-  purpose: 'session' | 'test';
+  purpose: ConnectionPurpose;
 }
 
 interface PendingDecision {

@@ -4,20 +4,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Added
-
-- **A per-host switch for command history.** The connection form now has a "Record command history" toggle, independent of the global one in Settings → Security. Commands already recorded for that host are not affected.
+## [1.0.2] — 2026-09-13
 
 ### Changed
 
+- **Command history can now be turned off for a single host from the connection form.** The per-host setting already existed but had no control in the interface; the form now has a "Record command history" toggle, independent of the global one in Settings → Security. Commands already recorded for that host are not affected.
+- **"Clear" in the History drawer now respects the host filter.** With a host selected in the filter — including "This session" and a host that has since been deleted — it removes only that host's commands, and the confirmation shows exactly how many will be removed. With "All" selected it clears everything, as before. Commands from Quick Connect sessions are grouped under their own "Quick Connect" filter: those sessions have no saved host to tell servers apart, so clearing it removes the history of every Quick Connect session, and the confirmation says so.
 - **Esc now closes exactly one thing, in a consistent order, everywhere.** All 23 places that used to listen for Esc on their own — dialogs, drawers, the context menu, the snippet palette, search, the error panel, and in-place edits like a tab rename or a history note — now go through a single shared stack. The most recently opened thing closes first, regardless of where keyboard focus happens to be.
 - **The dangerous command guard now names every object a compound command destroys.** `rm -rf /var/www && rm -rf /etc` used to name only the first one, so you confirmed one deletion while two were about to happen. The dialog now lists all of them and asks you to type the name of one of them — picked at random among the most severe, so the expected answer can't be learned by habit and typed without reading. Commands with a single dangerous fragment are unchanged.
 
 ### Fixed
 
-- `configUpdate` rejected setting paths inherited from `Object.prototype` (`toString`, `constructor`, …) instead of accepting them and rewriting `config.json`.
+- `configUpdate` accepted setting paths inherited from `Object.prototype` (`toString`, `constructor`, …) and rewrote `config.json` with them; such paths are now rejected.
 - **Muting a dashboard health finding during a Quick Connect session no longer silences that finding for every other Quick Connect session.** All such sessions shared one mute entry with nowhere host-specific to live. Quick Connect sessions have no saved host to attach a persistent mute to, so the "Don't show again" button is no longer shown for them; the banner's close button still works as before.
 - **"Reset settings to defaults" no longer loses SSH keys pending deployment to the server, or changes the interface language.** Both used to be wiped as a side effect of the reset, alongside the actual settings — a key generated in step 4 of the SSH key wizard but not yet copied to the server would silently disappear, so the next connection attempt used a key the server didn't recognize.
 - **Esc no longer leaks into the remote session while also closing a panel.** Previously the key reached xterm's own handling before the panel's listener ran (no `preventDefault`), so it did both: the control byte was sent to the server *and* the panel closed. Now Esc belongs to the open panel until it's closed.
@@ -34,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`Ctrl+H` and `Ctrl+K` now work while the terminal has focus.** Opening the history drawer and Quick Connect from the keyboard silently did nothing in a focused terminal — the toolbar buttons worked, the shortcuts didn't. xterm recognizes those two as terminal input (`Ctrl+H` is Backspace, `Ctrl+K` is a kill-line) and stopped the key before the app ever saw it, while a shortcut like `Ctrl+,` — which maps to no control character — got through. All app shortcuts are now claimed before the terminal sees them, whatever they're bound to.
 - **App shortcuts no longer send a stray control byte to the server on top of doing their job.** `Ctrl+F` (search) also sent `0x06` to the shell, `Ctrl+W` (close tab) also sent `0x17` — a kill-word in most shells. Only `Ctrl+Space` was handled correctly. A shortcut that the app acts on is now consumed by the app, and this holds for any combination you rebind it to.
 - **Assigning a new shortcut in Settings no longer triggers the action you're rebinding.** Pressing `Ctrl+F` while capturing a combination assigned it *and* opened the terminal search behind the Settings overlay.
+- **Backspace no longer eats into the prompt after the terminal is resized.** Typed input that hasn't been sent yet was erased by counting characters, without checking what was actually on screen. After a window resize (the shell redraws the prompt line) or output arriving mid-typing, Backspace could erase part of the prompt, and Enter could send a command different from the one shown. The input echo is now reconciled against the screen.
+- **"Test connection" no longer makes a login attempt with an empty password** when the password field is left blank. That extra failed attempt counted toward the server's `MaxAuthTries` and could trip tools like fail2ban.
 
 ### Security
 

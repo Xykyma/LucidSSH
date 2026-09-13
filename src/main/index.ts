@@ -11,11 +11,11 @@ import { registerSecurityIpcHandlers } from './ipc/security';
 import { registerUpdateIpcHandlers } from './ipc/updates';
 import { initUpdater, checkForUpdates } from './updates/updater';
 import { initMainI18n } from './i18n';
-import { loadConfig } from './config/store';
+import { openLocalStores } from './startup/openLocalStores';
 
 /**
  * Точка входа main-процесса LucidSSH.
- * Порядок: hardening → single instance → ready → i18n → IPC → окно.
+ * Порядок: hardening → single instance → ready → хранилища → i18n → IPC → окно.
  */
 
 hardenCommandLine();
@@ -38,7 +38,7 @@ if (!gotLock) {
     // AppUserModelID — чтобы системные тосты Windows атрибутировались приложению (NOTIF-01/02).
     app.setAppUserModelId('com.lucidssh.app');
     hardenApp();
-    loadConfig();
+    openLocalStores();
     await initMainI18n();
     registerIpcHandlers();
     registerHostIpcHandlers();

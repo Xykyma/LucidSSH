@@ -6,6 +6,7 @@ import { TabBar } from './TabBar';
 import { ConnectionLogPanel } from './ConnectionLogPanel';
 import { ConnectionStepper } from './ConnectionStepper';
 import type { AccessRiskPrompt, DangerousCommandPrompt } from '@shared/guard';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
 import {
   XtermView,
   destroyTerminal,
@@ -337,7 +338,7 @@ export function TerminalArea(): JSX.Element {
           onOpenGuardSettings={
             !(config?.guard.globalEnabled ?? true)
               ? () => openSettings('security')
-              : active.hostId !== 0
+              : active.hostId !== QUICK_CONNECT_HOST_ID
                 ? () => {
                     const host = hosts.find((h) => h.id === active.hostId);
                     if (host) openDrawer({ editHost: host });
@@ -357,7 +358,7 @@ export function TerminalArea(): JSX.Element {
           // HM-11: у Quick Connect (hostId=0) нет строки в hosts.db — персистентная
           // «Больше не показывать» здесь не может жить (.scratch/host-scoped-flags-to-db).
           onDismissIssue={
-            active.hostId !== 0
+            active.hostId !== QUICK_CONNECT_HOST_ID
               ? (issue) => {
                   void window.lucidSSH.dismissDashboardAlert(active.hostId, issue);
                   dismissDashboardAlertIssue(active.sessionId, issue);
@@ -436,7 +437,9 @@ export function TerminalArea(): JSX.Element {
                 sessionId={active.sessionId}
                 failed={active.status === 'disconnected'}
                 onReconnect={
-                  active.hostId !== 0 ? () => void reconnect(active.hostId, active.sessionId) : undefined
+                  active.hostId !== QUICK_CONNECT_HOST_ID
+                    ? () => void reconnect(active.hostId, active.sessionId)
+                    : undefined
                 }
                 onShowDetails={() => setDetailsOpen(true)}
               />
@@ -453,7 +456,7 @@ export function TerminalArea(): JSX.Element {
                 <div className="pointer-events-auto mt-1 flex flex-col items-center gap-2">
                   {/* HM-11: у Quick Connect сессии (hostId=0) нет сохранённого хоста —
                       переподключаться нечем, только «Закрыть» (крестик на вкладке) и детали. */}
-                  {active.hostId !== 0 && (
+                  {active.hostId !== QUICK_CONNECT_HOST_ID && (
                     <button
                       type="button"
                       onClick={() => void reconnect(active.hostId, active.sessionId)}

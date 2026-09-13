@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SessionInfo } from '@shared/ssh';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
 import { useSessions } from '@/stores/sessions';
 import { useConfig } from '@/stores/config';
 import { usePanels } from '@/stores/panels';
@@ -232,7 +233,7 @@ export function TabBar({
             {t('tabs.rename')}
           </button>
           {/* HM-11: у Quick Connect сессии (hostId=0) нет хоста, дублировать некуда */}
-          {menu.session.hostId !== 0 && (
+          {menu.session.hostId !== QUICK_CONNECT_HOST_ID && (
             <button
               type="button"
               role="menuitem"
