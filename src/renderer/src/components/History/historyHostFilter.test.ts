@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { QUICK_CONNECT_HOST_ID, resolveClearTarget, showsSessionChip } from './historyHostFilter';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
+import { resolveClearTarget, showsSessionChip } from './historyHostFilter';
 
 /**
  * Регрессия (HIST-08, ревью перед 1.0.2): все сессии Быстрого подключения

@@ -9,12 +9,8 @@ import { Icon } from '@/components/common/Icon';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
-import {
-  QUICK_CONNECT_HOST_ID,
-  resolveClearTarget,
-  showsSessionChip,
-  type HostFilter
-} from './historyHostFilter';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
+import { resolveClearTarget, showsSessionChip, type HostFilter } from './historyHostFilter';
 
 /**
  * Панель истории команд (HistoryDrawer, Design_Brief §3.5; скриншот 06).

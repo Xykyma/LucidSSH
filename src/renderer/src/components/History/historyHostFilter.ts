@@ -1,3 +1,5 @@
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
+
 /**
  * Фильтр по хосту в панели истории и цель кнопки «Очистить» (HIST-08).
  *
@@ -6,8 +8,6 @@
  * этот id — не «хост»: его чип подписан «Быстрое подключение», а очистка по
  * нему удаляет историю всех быстрых подключений и прямо так и называется.
  */
-
-export const QUICK_CONNECT_HOST_ID = 0;
 
 export type HostFilter = number | 'all' | 'session';
 

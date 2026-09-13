@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Snippet } from '@shared/history';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
 import { Icon } from '@/components/common/Icon';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
@@ -41,7 +42,7 @@ export function SnippetSaveDialog({
     ? editSnippet.hostId != null
       ? 'server'
       : 'global'
-    : hostId != null && hostId !== 0
+    : hostId != null && hostId !== QUICK_CONNECT_HOST_ID
       ? 'server'
       : 'global';
   const [scope, setScope] = useState<'server' | 'global'>(initialScope);
@@ -52,7 +53,7 @@ export function SnippetSaveDialog({
   const canSave = name.trim().length > 0 && !busy;
   // hostId=0 — Quick Connect (HM-11), нет реального хоста: серверный скоуп недоступен,
   // иначе снипет «приклеится» ко всем последующим Quick Connect сессиям (общий сентинел).
-  const canPickServer = (hostId != null && hostId !== 0) || editSnippet?.hostId != null;
+  const canPickServer = (hostId != null && hostId !== QUICK_CONNECT_HOST_ID) || editSnippet?.hostId != null;
   const serverHostId = hostId ?? editSnippet?.hostId;
   const targetHostId = scope === 'server' ? serverHostId : undefined;
 
