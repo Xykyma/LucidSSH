@@ -20,6 +20,8 @@
 const MARKDOWN_SECTION_HEADER = /^##\s*(ru|en)\s*$/i;
 const HTML_SECTION_HEADER = /<h2[^>]*>\s*(ru|en)\s*<\/h2>/gi;
 const HTML_LIST_ITEM = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+/** Теги, которые GitHub генерирует из markdown, — чтобы не резать `<host>` в тексте без секций. */
+const HTML_MARKUP = /<\/?(p|h[1-6]|ul|ol|li|strong|em|code|pre|a|hr|br|blockquote)\b[^>]*>/i;
 
 const HTML_ENTITIES: Record<string, string> = {
   amp: '&',
@@ -36,7 +38,8 @@ function decodeHtmlEntities(text: string): string {
     if (entity[0] === '#') {
       const isHex = entity[1] === 'x' || entity[1] === 'X';
       const codePoint = parseInt(entity.slice(isHex ? 2 : 1), isHex ? 16 : 10);
-      return Number.isNaN(codePoint) ? match : String.fromCodePoint(codePoint);
+      // Вне диапазона Unicode fromCodePoint бросает RangeError — а разбор идёт прямо в рендере.
+      return Number.isNaN(codePoint) || codePoint > 0x10ffff ? match : String.fromCodePoint(codePoint);
     }
     return HTML_ENTITIES[entity.toLowerCase()] ?? match;
   });
@@ -90,10 +93,12 @@ function parseHtml(text: string): Map<'ru' | 'en', string[]> {
 export function parseReleaseNotes(text: string | undefined, lang: 'ru' | 'en'): string[] {
   if (!text || !text.trim()) return [];
 
-  const isHtml = /<[a-z][^>]*>/i.test(text);
-  const sections = isHtml ? parseHtml(text) : parseMarkdown(text);
+  // Формат — по маркерам секций, а не по наличию `<…>`: в markdown-тексте
+  // встречаются плейсхолдеры вроде `ssh user@<host>`, и их нельзя принять за теги.
+  let sections = parseMarkdown(text);
+  if (sections.size === 0) sections = parseHtml(text);
 
-  if (sections.size === 0) return [isHtml ? stripHtml(text) : text.trim()];
+  if (sections.size === 0) return [HTML_MARKUP.test(text) ? stripHtml(text) : text.trim()];
 
   const target = sections.get(lang) ?? sections.get(lang === 'ru' ? 'en' : 'ru') ?? [];
   return target;
