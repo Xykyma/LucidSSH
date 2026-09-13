@@ -49,7 +49,7 @@ LucidSSH fills that gap: a full-featured SSH client with active protection again
 - Basic SSH key management (local)
 - PuTTY and ~/.ssh/config session import
 - Host export and import (JSON, no secrets)
-- Auto-update of the installed version (HTTPS, with signature verification)
+- Auto-update of the installed version (HTTPS, with SHA-256 integrity verification)
 - Settings page with sections: Terminal, Connection, Security, Interface, Hotkeys
 - Notifications: Windows system toasts + an event icon in the header
 - First-run screen (onboarding)
@@ -171,7 +171,7 @@ Priority markers: **Must** — required for the 1.0 release, **Should** — impo
 | ✅ HIST-05 | Dangerous commands intercepted by the guard are shown with a "blocked" / "confirmed by user" status. | Should | GUARD-06, HIST-01 | History shows the correct status for blocked commands. |
 | ✅ HIST-06 | History keeps at least 10,000 entries; old ones are removed once the limit is reached (FIFO). | Should | HIST-01 | At 10,001 entries, the oldest is automatically removed. |
 | ✅ HIST-07 | Before an entry is written to history, common secrets are detected and masked: `export KEY=...`, `--password=...`, `-p<password>`, `Authorization: Bearer ...` headers, `mysql --password=`, and similar. A masked value is never exposed via search or export. The user can skip saving an individual command and disable history globally or per host. Terminal output is not saved by default. | Must | HIST-01 | The command `export API_KEY=secret` is saved with the value masked; the secret isn't visible in search or export; the host form has a "Record command history" toggle, and once it's turned off, commands from that host no longer reach history. |
-| ✅ HIST-08 | In the History panel (Ctrl+H), the user can clear a single host's history via the filter chip without touching other hosts' entries. With a host filter active (including "This session" and the orphaned host of a deleted server — the chip is built from the history entries, not from live hosts), the "Clear" button at the bottom of the drawer removes only that `host_id`'s entries; the confirmation shows that host's exact entry count (independent of the search text). With the "All" filter, the button behaves as before. | Should | HIST-01, HIST-06 | With a filter on host A (3 entries) and host B (2 entries), "Clear" removes only host A's 3 entries; the dialog shows "3," not the total; after deletion, the filter resets to "All". |
+| ✅ HIST-08 | In the History panel (Ctrl+H), the user can clear a single host's history via the filter chip without touching other hosts' entries. With a host filter active (including "This session" and the orphaned host of a deleted server — the chip is built from the history entries, not from live hosts), the "Clear" button at the bottom of the drawer removes only that `host_id`'s entries; the confirmation shows that host's exact entry count (independent of the search text). With the "All" filter, the button behaves as before. Quick Connect entries (HM-11) aren't a host: all such sessions share `host_id=0`, and the servers behind it can't be told apart. They're grouped under a separate "Quick Connect" chip; clearing it removes the history of every Quick Connect session, and the dialog says so plainly instead of calling it a host's history. The "This session" chip isn't shown in a Quick Connect session. | Should | HIST-01, HIST-06 | With a filter on host A (3 entries) and host B (2 entries), "Clear" removes only host A's 3 entries; the dialog shows "3," not the total; after deletion, the filter resets to "All". Entries from two Quick Connect sessions to different servers appear under one "Quick Connect" chip, not under a server name; the clear dialog for it describes removing all Quick Connect history. |
 
 ## 3.9 Mini server dashboard
 
@@ -282,9 +282,9 @@ Priority markers: **Must** — required for the 1.0 release, **Should** — impo
 
 | ID | Requirement | Priority | Dependency | Acceptance criteria |
 |---|---|---|---|---|
-| ✅ HELP-01 | The "About" section of the settings page has a "Guide" button that opens FeatureGuide. The "About" section is described separately under SET-09. | Must | SET-01 | The button is visible; FeatureGuide opens. |
-| ✅ HELP-02 | Pressing `F1` anywhere in the app opens FeatureGuide. `F1` doesn't conflict with the terminal: the key is only intercepted when the input line is empty. | Should | — | F1 on an empty input line opens FeatureGuide; F1 inside vim/mc never reaches the terminal. |
-| ✅ HELP-03 | A "Detailed guide" link is present at the bottom of FeatureGuide. Clicking it opens a separate Electron `BrowserWindow` with a full help page. The help window doesn't block the main window (non-modal). | Must | — | The link opens a separate window; the main window stays active. |
+| ✅ HELP-01 | The "About" section of the settings page has a "Guide" button that opens the full guide (HELP-03). The "About" section is described separately under SET-09. | Must | SET-01 | The button is visible; the guide opens. |
+| ✅ HELP-02 | Pressing `F1` anywhere in the app opens the full guide (HELP-03). `F1` is fixed (it can't be reassigned, SET-10) and is always captured by the app before the terminal — it never reaches the SSH session; as a side effect, F1 inside programs on the server (e.g. mc's help) isn't available. | Should | — | F1 opens the guide, including while the terminal has focus; F1 inside vim/mc never reaches the terminal. |
+| ✅ HELP-03 | The full guide is a modal window over the main app window (not a separate `BrowserWindow`). It opens via F1 (HELP-02), the "Guide" button in settings (HELP-01), the "Help" button in the title bar, and the "Detailed guide" link at the bottom of FeatureGuide. FeatureGuide — a short card-based feature overview — opens from the welcome screen (OB-01). SSH sessions keep running underneath the guide. | Must | — | Each of the four entry points opens the guide; closing it leaves the active session uninterrupted. |
 | ✅ HELP-04 | The help window has 5 tabs: **Getting started**, **Snippets**, **Guard**, **Error detector**, **Hotkeys**. Tabs switch without reloading the window. Each tab's content is static HTML, requiring no network connection. | Must | HELP-03 | All 5 tabs are present and show correct content offline. |
 | ✅ HELP-05 | The "Snippets" tab explains: how to save a command (★ in history / terminal context menu), and the difference between a global and a server-scoped snippet. | Must | SNIP-05, HELP-04 | The tab describes both modes. |
 | ✅ HELP-06 | The "Hotkeys" tab contains a table of all the app's keyboard shortcuts. | Should | HELP-04 | The table contains at least 10 current shortcuts. |
@@ -386,7 +386,7 @@ Files are created with access restricted to the current Windows user. SQL querie
 | UI framework | React + Tailwind CSS | Component-based, convenient styling |
 | Database | better-sqlite3 | Synchronous SQLite for the main process, no dependencies |
 | Secret storage | keytar (npm) | Wrapper around Windows Credential Manager |
-| Build | electron-builder | NSIS installer + portable ZIP |
+| Build | electron-builder | NSIS installer (x64) |
 | Updates | electron-updater | Auto-update with SHA-256 checksum verification |
 
 ---
