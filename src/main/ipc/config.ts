@@ -79,7 +79,7 @@ export function registerConfigIpcHandlers(): void {
 
   ipcMain.handle(IPC.configUpdate, (event, rawPath: unknown, value: unknown): Settings => {
     assertSenderIsMainWindow(event);
-    if (typeof rawPath !== 'string' || !(rawPath in WRITABLE)) {
+    if (typeof rawPath !== 'string' || !Object.hasOwn(WRITABLE, rawPath)) {
       throw new IpcValidationError('path: unknown setting');
     }
     const setter = WRITABLE[rawPath]!;
