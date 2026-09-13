@@ -6,6 +6,7 @@ import type { AppConfig } from '@shared/config';
 import { DEFAULT_HOTKEYS } from '@shared/hotkeys';
 import type { Host } from '@shared/hosts';
 import type { Snippet } from '@shared/history';
+import type { SubmitResult } from '@shared/guard';
 import { IPC } from '@shared/ipc';
 
 /**
@@ -196,7 +197,13 @@ vi.mock('../ssh/sessionManager', () => ({
   getSessionLog: vi.fn(),
   listSessions: vi.fn(),
   resizeSession: vi.fn(),
-  sessionExists: vi.fn()
+  sessionExists: vi.fn(),
+  // Не вызываются легитимной проводкой (ADR-0008, пункт 2): единственный
+  // законный вызывающий — guard/manager.ts. Здесь как vi.fn ради
+  // «прямой записи в провод нет» в тестах ниже — реестр шпионов
+  // (collectMockFns) подхватывает их программно.
+  sendInput: vi.fn(),
+  sendCommandLine: vi.fn()
 }));
 
 vi.mock('../ssh/testConnection', () => ({
@@ -536,6 +543,70 @@ describe('пункт 1 — сторож отправителя (параметр
   // — кейс `hosts:delete` из it.each выше падал с сообщением об ошибке
   // валидатора id на undefined вместо «IPC from unknown sender rejected» (и
   // repo.getHost/deleteHost получали вызов до отказа). Правка возвращена.
+});
+
+describe('пункт 2 — каналы Стража доходят до guard/manager, не до провода', () => {
+  const mockSessionExists = vi.mocked(sessionManagerModule.sessionExists);
+  const mockSendInput = vi.mocked(sessionManagerModule.sendInput);
+  const mockSendCommandLine = vi.mocked(sessionManagerModule.sendCommandLine);
+  const mockSubmitCommand = vi.mocked(guardManagerModule.submitCommand);
+  const mockSubmitRawInput = vi.mocked(guardManagerModule.submitRawInput);
+  const mockConfirmDangerousCommand = vi.mocked(guardManagerModule.confirmDangerousCommand);
+  const mockCancelDangerousCommand = vi.mocked(guardManagerModule.cancelDangerousCommand);
+
+  const SESSION_ID = '11111111-1111-1111-1111-111111111111';
+  const SUBMIT_RESULT: SubmitResult = { status: 'sent' };
+
+  beforeEach(() => {
+    mockSessionExists.mockReturnValue(true);
+  });
+
+  it('guard:submit — submitCommand вызван ровно с (sessionId, command), провод не тронут', async () => {
+    mockSubmitCommand.mockReturnValue(SUBMIT_RESULT);
+
+    const result = await invoke(IPC.guardSubmit, mainEvent(), SESSION_ID, 'rm -rf /');
+
+    expect(result).toEqual({ ok: true, value: SUBMIT_RESULT });
+    expect(mockSubmitCommand).toHaveBeenCalledTimes(1);
+    expect(mockSubmitCommand).toHaveBeenCalledWith(SESSION_ID, 'rm -rf /');
+    expect(mockSendInput).not.toHaveBeenCalled();
+    expect(mockSendCommandLine).not.toHaveBeenCalled();
+  });
+
+  it('session:send-input — submitRawInput вызван с (sessionId, data), провод не тронут', async () => {
+    mockSubmitRawInput.mockReturnValue(SUBMIT_RESULT);
+
+    const result = await invoke(IPC.sessionSendInput, mainEvent(), SESSION_ID, 'ls\n');
+
+    expect(result).toEqual({ ok: true, value: SUBMIT_RESULT });
+    expect(mockSubmitRawInput).toHaveBeenCalledTimes(1);
+    expect(mockSubmitRawInput).toHaveBeenCalledWith(SESSION_ID, 'ls\n');
+    expect(mockSendInput).not.toHaveBeenCalled();
+    expect(mockSendCommandLine).not.toHaveBeenCalled();
+  });
+
+  it('guard:confirm — confirmDangerousCommand вызван, провод не тронут', async () => {
+    mockConfirmDangerousCommand.mockReturnValue(true);
+    const requestId = '22222222-2222-2222-2222-222222222222';
+
+    const result = await invoke(IPC.guardConfirm, mainEvent(), requestId, 'file.txt');
+
+    expect(result).toEqual({ ok: true, value: { allowed: true } });
+    expect(mockConfirmDangerousCommand).toHaveBeenCalledWith(requestId, 'file.txt');
+    expect(mockSendInput).not.toHaveBeenCalled();
+    expect(mockSendCommandLine).not.toHaveBeenCalled();
+  });
+
+  it('guard:cancel — cancelDangerousCommand вызван, провод не тронут', async () => {
+    const requestId = '33333333-3333-3333-3333-333333333333';
+
+    const result = await invoke(IPC.guardCancel, mainEvent(), requestId);
+
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(mockCancelDangerousCommand).toHaveBeenCalledWith(requestId);
+    expect(mockSendInput).not.toHaveBeenCalled();
+    expect(mockSendCommandLine).not.toHaveBeenCalled();
+  });
 });
 
 describe('пункт 3 — hostDelete без force не удаляет', () => {
