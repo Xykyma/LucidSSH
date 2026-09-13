@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Единственная зависимость emit — главное окно. `electron` модуль не импортируется
-// вовсе, поэтому vi.mock('electron') (которого в проекте нет ни разу) не нужен.
+// Единственная зависимость emit — главное окно. `electron` модуль `emit` не
+// импортирует вовсе, поэтому мок `electron` здесь не нужен.
 vi.mock('../window/mainWindow', () => ({ getMainWindow: vi.fn(() => null) }));
 
 import { IPC } from '@shared/ipc';
