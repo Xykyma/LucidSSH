@@ -8,9 +8,18 @@ import type { Snippet } from '@shared/history';
  * вынесено в отдельный стор.
  */
 
+/** Хост-источник диалога сохранения сниппета — только когда он ВАЖЕН явно
+ *  (сохранение из строки истории, решение 3 spec.md «history-snippet-mark»):
+ *  привязывает область «Для этого сервера» к хосту строки, а не к активной
+ *  вкладке. undefined-поле означает «у строки нет живого хоста» (Быстрое
+ *  подключение / хост удалён) — серверная область недоступна вовсе, не
+ *  «использовать активную вкладку». Когда sourceHost не передан совсем
+ *  (сохранение из терминала, редактирование из каталога) — область берётся
+ *  из активной сессии, как раньше. */
 interface SnippetDialogState {
   command: string;
   editSnippet?: Snippet;
+  sourceHost?: { hostId?: number; hostName?: string };
 }
 
 /** Куда открыть окно справки: конкретная вкладка + опциональный якорь внутри неё. */
@@ -41,7 +50,11 @@ interface PanelsStore {
   openHelp: (target?: HelpTarget) => void;
   closeHelp: () => void;
   snippetDialog: SnippetDialogState | null;
-  openSnippetDialog: (command: string, editSnippet?: Snippet) => void;
+  openSnippetDialog: (
+    command: string,
+    editSnippet?: Snippet,
+    sourceHost?: { hostId?: number; hostName?: string }
+  ) => void;
   closeSnippetDialog: () => void;
   /** WIN-04: поисковый запрос, который CatalogPanel должна подставить при
    *  открытии по ссылке из диалога закрытия (напр. карточка tmux). Разово —
@@ -102,7 +115,8 @@ export function PanelsProvider({ children }: { children: ReactNode }): JSX.Eleme
       },
       closeHelp: () => setHelpOpen(false),
       snippetDialog,
-      openSnippetDialog: (command, editSnippet) => setSnippetDialog({ command, editSnippet }),
+      openSnippetDialog: (command, editSnippet, sourceHost) =>
+        setSnippetDialog({ command, editSnippet, sourceHost }),
       closeSnippetDialog: () => setSnippetDialog(null),
       catalogQuery,
       openCatalogQuery: (query) => setCatalogQuery(query),

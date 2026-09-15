@@ -5,6 +5,7 @@ import type { HistoryEntry, HistoryHostChip } from '@shared/history';
 import { isSignalExitCode } from '@shared/ssh';
 import { insertIntoComposer } from '@/stores/composerBus';
 import { usePanels } from '@/stores/panels';
+import { useHosts } from '@/stores/hosts';
 import { Icon } from '@/components/common/Icon';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
@@ -34,6 +35,7 @@ function relativeTime(iso: string, t: (k: string, o?: Record<string, number>) =>
 export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.Element {
   const { t } = useTranslation();
   const { closeHistory, openSnippetDialog, historyRevision } = usePanels();
+  const { hosts } = useHosts();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState('');
@@ -165,6 +167,20 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     setNoteText('');
     refreshHistory();
   };
+
+  // Решение 3 (spec.md): сохранение из строки истории привязывает «Для этого
+  // сервера» к хосту СТРОКИ, не активной вкладки. Хоста строки нет в hosts
+  // (удалён) или это Быстрое подключение — серверная область недоступна
+  // вовсе (иначе серверный сниппет привязался бы к невидимому сироте).
+  // Имя — текущее из стора хостов, не денормализованное e.hostName строки.
+  const resolveSourceHost = useCallback(
+    (e: HistoryEntry): { hostId?: number; hostName?: string } => {
+      if (e.hostId === undefined || e.hostId === QUICK_CONNECT_HOST_ID) return {};
+      const host = hosts.find((h) => h.id === e.hostId);
+      return host ? { hostId: host.id, hostName: host.name } : {};
+    },
+    [hosts]
+  );
 
   const backdrop = useBackdropClose(closeHistory);
 
@@ -303,7 +319,7 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
                         <IconBtn
                           title={t('history.saveSnippet')}
                           hoverColorClass="hover:text-lavender"
-                          onClick={() => openSnippetDialog(e.command)}
+                          onClick={() => openSnippetDialog(e.command, undefined, resolveSourceHost(e))}
                         >
                           <Icon name="save" size={13} />
                         </IconBtn>

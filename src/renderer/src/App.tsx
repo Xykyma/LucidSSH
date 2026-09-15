@@ -178,8 +178,13 @@ function AppBody(): JSX.Element {
         <SnippetSaveDialog
           command={snippetDialog.command}
           editSnippet={snippetDialog.editSnippet}
-          hostId={activeSession?.hostId}
-          hostName={activeSession?.hostName}
+          // sourceHost передан (сохранение из строки истории, решение 3
+          // spec.md) — привязка к хосту строки, а не к активной вкладке;
+          // не передан (терминал/редактирование из каталога) — как раньше.
+          hostId={snippetDialog.sourceHost ? snippetDialog.sourceHost.hostId : activeSession?.hostId}
+          hostName={
+            snippetDialog.sourceHost ? snippetDialog.sourceHost.hostName : activeSession?.hostName
+          }
           onSaved={() => {
             bumpSnippets();
             closeSnippetDialog();
