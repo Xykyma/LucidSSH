@@ -54,14 +54,24 @@ export function SnippetList({
     () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
   );
 
+  // Сброс своего поиска при новой подсветке — иначе целевой сниппет может
+  // быть отфильтрован текстом, оставшимся от прошлого открытия панели, и
+  // scrollIntoView молча ничего не найдёт (rowRefs не содержит невидимых строк).
+  useEffect(() => {
+    if (highlightId != null) setQuery('');
+  }, [highlightId]);
+
+  const q = query.trim().toLowerCase();
+
+  // Отдельный эффект от сброса выше: строка появляется в rowRefs только ПОСЛЕ
+  // ре-рендера, вызванного очисткой query (setQuery выше не синхронный) — эта
+  // зависимость от q гарантирует повторный запуск, когда фильтр реально снят.
   useEffect(() => {
     if (highlightId == null) return;
     rowRefs.current
       .get(highlightId)
       ?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
-  }, [highlightId, reducedMotion]);
-
-  const q = query.trim().toLowerCase();
+  }, [highlightId, reducedMotion, q]);
   const filtered = useMemo(
     () =>
       snippets.filter(

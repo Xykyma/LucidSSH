@@ -349,7 +349,11 @@ export function HistoryDrawer({
                           <IconBtn
                             title={
                               e.snippet.hostId !== undefined && e.snippet.hostId !== activeHostId
-                                ? t('history.savedForHost', { host: e.hostName })
+                                ? t('history.savedForHost', {
+                                    // Текущее имя из стора хостов (см. resolveSourceHost выше) —
+                                    // не денормализованное e.hostName, могло устареть после переименования.
+                                    host: hosts.find((h) => h.id === e.snippet!.hostId)?.name ?? e.hostName
+                                  })
                                 : t('history.savedAsSnippet', { name: e.snippet.name })
                             }
                             colorClass="text-lavender"

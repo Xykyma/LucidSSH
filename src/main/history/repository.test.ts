@@ -272,4 +272,18 @@ describe('listHistory — пометка сохранённых сниппето
     const [entry] = repo.listHistory();
     expect(entry?.snippet).toBeUndefined();
   });
+
+  it('два сниппета с одинаковой командой в одном скоупе не размножают строку истории', async () => {
+    // findDuplicateSnippet (SNIP-11) только предупреждает при сохранении, не
+    // блокирует его — в snippets нет UNIQUE(command, host_id), значит такое
+    // состояние физически достижимо, и listHistory не должно на нём ломаться.
+    const { repo, snippets } = await freshHistoryAndSnippets();
+    repo.recordHistory(rec(1, 'alpha', 'ls -la'));
+    snippets.createSnippet({ name: 'first', command: 'ls -la' });
+    snippets.createSnippet({ name: 'second', command: 'ls -la' });
+
+    const entries = repo.listHistory();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.snippet).toBeDefined();
+  });
 });

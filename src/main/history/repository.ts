@@ -122,13 +122,20 @@ export function recordHistory(input: HistoryRecordInput): { id: number; hasSecre
 }
 
 /**
- * Пометка «сохранена как сниппет» (SNIP-12, решение 10 spec.md): LEFT JOIN
- * по команде и области — серверный сниппет ЭТОЙ строки (её host_id) и
- * глобальный, COALESCE отдаёт серверный первым. Правило «тот же сниппет»
- * остаётся в одном месте с SNIP-11 (findDuplicateSnippet), без второй копии
- * в renderer. h.host_id IS NULL (Быстрое подключение/без хоста) не матчит
- * srv.host_id по равенству (NULL = NULL не true в SQL) — совпадают только
+ * Пометка «сохранена как сниппет» (SNIP-12, решение 10 spec.md): скалярные
+ * подзапросы — серверный сниппет ЭТОЙ строки (её host_id) и глобальный,
+ * COALESCE отдаёт серверный первым. Правило «тот же сниппет» остаётся в
+ * одном месте с SNIP-11 (findDuplicateSnippet), без второй копии в renderer.
+ * h.host_id IS NULL (Быстрое подключение/без хоста) не матчит host_id
+ * подзапроса srv по равенству (NULL = NULL не true в SQL) — совпадают только
  * глобальные, как и требует решение 2.
+ *
+ * Скалярные подзапросы, а не LEFT JOIN: findDuplicateSnippet — только
+ * предупреждение при сохранении (SNIP-11), не блокирует его, и в `snippets`
+ * нет UNIQUE(command, host_id) — два сниппета с одинаковой командой в одном
+ * скоупе физически возможны. LEFT JOIN на дубликат размножил бы строку
+ * history (по одной на каждое совпадение); `ORDER BY id LIMIT 1` в подзапросе
+ * гарантирует не больше одного совпадения на сторону независимо от этого.
  */
 export function listHistory(query?: HistoryQuery): HistoryEntry[] {
   const clauses: string[] = [];
@@ -146,12 +153,16 @@ export function listHistory(query?: HistoryQuery): HistoryEntry[] {
   const rows = openHistoryDb()
     .prepare(
       `SELECT h.*,
-              COALESCE(srv.id, glb.id) AS snip_id,
-              COALESCE(srv.name, glb.name) AS snip_name,
-              srv.host_id AS snip_host_id
+              COALESCE(
+                (SELECT id FROM snippets WHERE command = h.command AND host_id = h.host_id ORDER BY id LIMIT 1),
+                (SELECT id FROM snippets WHERE command = h.command AND host_id IS NULL ORDER BY id LIMIT 1)
+              ) AS snip_id,
+              COALESCE(
+                (SELECT name FROM snippets WHERE command = h.command AND host_id = h.host_id ORDER BY id LIMIT 1),
+                (SELECT name FROM snippets WHERE command = h.command AND host_id IS NULL ORDER BY id LIMIT 1)
+              ) AS snip_name,
+              (SELECT host_id FROM snippets WHERE command = h.command AND host_id = h.host_id ORDER BY id LIMIT 1) AS snip_host_id
        FROM history h
-       LEFT JOIN snippets srv ON srv.command = h.command AND srv.host_id = h.host_id
-       LEFT JOIN snippets glb ON glb.command = h.command AND glb.host_id IS NULL
        ${where}
        ORDER BY h.started_at DESC LIMIT 2000`
     )
