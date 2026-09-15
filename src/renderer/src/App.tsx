@@ -58,7 +58,8 @@ function AppBody(): JSX.Element {
     openHelp,
     quickConnectOpen,
     openQuickConnect,
-    closeQuickConnect
+    closeQuickConnect,
+    openCatalogRequest
   } = usePanels();
   const { addFingerprintEvent } = useEvents();
   const [previewWelcome, setPreviewWelcome] = useState(false);
@@ -172,14 +173,27 @@ function AppBody(): JSX.Element {
         />
       )}
       <WindowCloseGuard />
-      {historyOpen && <HistoryDrawer activeHostId={activeSession?.hostId} />}
+      {historyOpen && (
+        <HistoryDrawer
+          activeHostId={activeSession?.hostId}
+          onOpenCatalog={(target) => {
+            void update('ui.catalogPanelOpen', true);
+            if (target) openCatalogRequest(target);
+          }}
+        />
+      )}
       {settingsOpen && <SettingsScreen onOpenGuide={() => openHelp()} />}
       {snippetDialog && (
         <SnippetSaveDialog
           command={snippetDialog.command}
           editSnippet={snippetDialog.editSnippet}
-          hostId={activeSession?.hostId}
-          hostName={activeSession?.hostName}
+          // sourceHost передан (сохранение из строки истории, решение 3
+          // spec.md) — привязка к хосту строки, а не к активной вкладке;
+          // не передан (терминал/редактирование из каталога) — как раньше.
+          hostId={snippetDialog.sourceHost ? snippetDialog.sourceHost.hostId : activeSession?.hostId}
+          hostName={
+            snippetDialog.sourceHost ? snippetDialog.sourceHost.hostName : activeSession?.hostName
+          }
           onSaved={() => {
             bumpSnippets();
             closeSnippetDialog();

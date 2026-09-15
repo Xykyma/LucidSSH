@@ -54,6 +54,12 @@ const MIGRATIONS: string[] = [
   // v3 — ручной порядок сниппетов (SNIP-10), раздельно для серверных/глобальных
   `
   ALTER TABLE snippets ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+  `,
+  // v4 — пометка «сохранена как сниппет» в listHistory (SNIP-12): подзапросы
+  // по (command, host_id) на каждой странице истории — без индекса это полный
+  // скан snippets на каждую строку history.
+  `
+  CREATE INDEX IF NOT EXISTS idx_snippets_command ON snippets(command, host_id);
   `
 ];
 

@@ -112,6 +112,7 @@ export const IPC = {
   historyClear: 'history:clear',
   historyCountForHost: 'history:count-for-host',
   historyClearForHost: 'history:clear-for-host',
+  historyListHosts: 'history:list-hosts', // таблетки фильтра (HIST-08) — вся история, не текущая страница listHistory
 
   // --- Сниппеты / избранное (SNIP-01…08) ---
   snippetsList: 'snippets:list',

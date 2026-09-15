@@ -1,10 +1,11 @@
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { HistoryEntry } from '@shared/history';
+import type { HistoryEntry, HistoryHostChip } from '@shared/history';
 import { isSignalExitCode } from '@shared/ssh';
 import { insertIntoComposer } from '@/stores/composerBus';
 import { usePanels } from '@/stores/panels';
+import { useHosts } from '@/stores/hosts';
 import { Icon } from '@/components/common/Icon';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
@@ -31,9 +32,20 @@ function relativeTime(iso: string, t: (k: string, o?: Record<string, number>) =>
   return t('history.time.days', { count: Math.floor(h / 24) });
 }
 
-export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.Element {
+export function HistoryDrawer({
+  activeHostId,
+  onOpenCatalog
+}: {
+  activeHostId?: number;
+  /** Переход в каталог по клику на пометку «сохранено» (SNIP-12, решение 8
+   *  spec.md): target задан — сохранённая вкладка+сниппет видимы и получают
+   *  прокрутку+подсветку; не задан — каталог просто открывается (серверный
+   *  сниппет чужого хоста, или нет активной сессии для серверного). */
+  onOpenCatalog: (target?: { tab: 'server' | 'global'; snippetId: number }) => void;
+}): JSX.Element {
   const { t } = useTranslation();
-  const { closeHistory, openSnippetDialog, historyRevision } = usePanels();
+  const { closeHistory, openSnippetDialog, historyRevision, snippetsRevision } = usePanels();
+  const { hosts } = useHosts();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState('');
@@ -44,6 +56,26 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [clearHostCount, setClearHostCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // × на таблетке удалённого хоста — отдельный диалог, не завязанный на
+  // hostFilter/clearTarget: клик не должен менять текущий фильтр, если
+  // пользователь отменит очистку (решение 5, spec.md).
+  const [deletedChipClearTarget, setDeletedChipClearTarget] = useState<HistoryHostChip | null>(null);
+  const [deletedChipClearCount, setDeletedChipClearCount] = useState(0);
+
+  const openDeletedChipClear = async (chip: HistoryHostChip): Promise<void> => {
+    setDeletedChipClearCount(await window.lucidSSH.historyCountForHost(chip.hostId));
+    setDeletedChipClearTarget(chip);
+  };
+
+  const confirmDeletedChipClear = async (): Promise<void> => {
+    if (!deletedChipClearTarget) return;
+    await window.lucidSSH.clearHistoryForHost(deletedChipClearTarget.hostId);
+    if (hostFilter === deletedChipClearTarget.hostId) setHostFilter('all');
+    setDeletedChipClearTarget(null);
+    refreshHistory();
+    refreshHostChips();
+  };
 
   // «Эта сессия» очищает по хосту активной сессии, а не всё сразу (HIST-08);
   // Быстрое подключение — отдельная цель, не «хост» (см. historyHostFilter.ts).
@@ -75,6 +107,7 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     // откатываемся к полной очистке.
     setClearConfirmOpen(false);
     refreshHistory();
+    refreshHostChips();
   };
 
   const refreshHistory = useCallback(() => {
@@ -82,29 +115,36 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     void window.lucidSSH.historyCount().then(setTotal);
   }, [query]);
 
+  // Таблетки — отдельный запрос по всей истории (HIST-08), не из страницы
+  // listHistory (LIMIT 2000): иначе хост, чьи строки все старше, таблетки не
+  // получает, а поиск с нулём совпадений стирал бы чип и имя хоста в диалоге
+  // очистки (живой дефект до этой миграции).
+  const [hostChips, setHostChips] = useState<HistoryHostChip[]>([]);
+  const refreshHostChips = useCallback(() => {
+    void window.lucidSSH.listHistoryHosts().then(setHostChips);
+  }, []);
+
   useEffect(() => {
     refreshHistory();
     // historyRevision: перечитать при записи новой команды, даже пока панель открыта
     // (main шлёт ev:history-recorded — иначе список замирает на моменте открытия).
-  }, [refreshHistory, historyRevision]);
+    // snippetsRevision: пометка «сохранено» (SNIP-12) считается в listHistory —
+    // диалог сохранения открывается поверх дровера (z-[60] над z-50), без
+    // перечитывания пометка не появится, пока дровер не переоткроют.
+  }, [refreshHistory, historyRevision, snippetsRevision]);
+
+  useEffect(() => {
+    refreshHostChips();
+  }, [refreshHostChips, historyRevision]);
 
   useEscapeClose('history-drawer', closeHistory);
-
-  // Имена хостов копятся за время жизни дровера, а не пересчитываются с нуля
-  // из текущего entries: иначе поиск, сузивший entries до нуля совпадений по
-  // выбранному хосту, стирает и чип, и имя хоста в диалоге подтверждения
-  // очистки (пустое «Очистить историю хоста «»?» перед необратимым удалением).
-  // Мутация ref в теле рендера — принятый паттерн ленивого кеша (не эффект),
-  // без гонок между рендером и useEffect.
-  const hostNamesRef = useRef<Map<number, string>>(new Map());
-  for (const e of entries) if (e.hostId !== undefined) hostNamesRef.current.set(e.hostId, e.hostName);
-
-  const hostChips = [...hostNamesRef.current.entries()];
 
   // Подписи кнопки и диалога очистки — по цели (HIST-08). 'stale' диалог не
   // открывает (см. openClearConfirm), поэтому ему достаются подписи «Все».
   const clearTargetHostName =
-    clearTarget.kind === 'host' ? (hostNamesRef.current.get(clearTarget.hostId) ?? '') : '';
+    clearTarget.kind === 'host'
+      ? (hostChips.find((c) => c.hostId === clearTarget.hostId)?.hostName ?? '')
+      : '';
   const clearCopy =
     clearTarget.kind === 'host'
       ? {
@@ -139,6 +179,36 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     setNoteEditing(null);
     setNoteText('');
     refreshHistory();
+  };
+
+  // Решение 3 (spec.md): сохранение из строки истории привязывает «Для этого
+  // сервера» к хосту СТРОКИ, не активной вкладки. Хоста строки нет в hosts
+  // (удалён) или это Быстрое подключение — серверная область недоступна
+  // вовсе (иначе серверный сниппет привязался бы к невидимому сироте).
+  // Имя — текущее из стора хостов, не денормализованное e.hostName строки.
+  const resolveSourceHost = useCallback(
+    (e: HistoryEntry): { hostId?: number; hostName?: string } => {
+      if (e.hostId === undefined || e.hostId === QUICK_CONNECT_HOST_ID) return {};
+      const host = hosts.find((h) => h.id === e.hostId);
+      return host ? { hostId: host.id, hostName: host.name } : {};
+    },
+    [hosts]
+  );
+
+  // Клик по пометке «сохранено» (решение 8 spec.md): цель — сниппет, видимый
+  // СЕЙЧАС в каталоге. Серверный — только если хост строки (=хост сниппета,
+  // см. решение 2/10) совпадает с активной вкладкой; иначе (чужой хост или
+  // нет активной сессии) видимой цели нет — каталог открывается без перехода.
+  const goToSnippet = (e: HistoryEntry): void => {
+    if (!e.snippet) return;
+    closeHistory();
+    if (e.snippet.hostId === undefined) {
+      onOpenCatalog({ tab: 'global', snippetId: e.snippet.id });
+    } else if (e.snippet.hostId === activeHostId) {
+      onOpenCatalog({ tab: 'server', snippetId: e.snippet.id });
+    } else {
+      onOpenCatalog();
+    }
   };
 
   const backdrop = useBackdropClose(closeHistory);
@@ -198,9 +268,17 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
             <Chip active={hostFilter === 'all'} onClick={() => setHostFilter('all')}>
               {t('history.filterAll')}
             </Chip>
-            {hostChips.map(([id, name]) => (
-              <Chip key={id} active={hostFilter === id} onClick={() => setHostFilter(id)}>
-                {id === QUICK_CONNECT_HOST_ID ? t('history.filterQuickConnect') : name}
+            {hostChips.map((chip) => (
+              <Chip
+                key={chip.hostId}
+                active={hostFilter === chip.hostId}
+                muted={chip.deleted}
+                onClick={() => setHostFilter(chip.hostId)}
+                onClear={chip.deleted ? () => void openDeletedChipClear(chip) : undefined}
+                clearLabel={t('history.clearDeletedHostChip')}
+              >
+                {chip.hostId === QUICK_CONNECT_HOST_ID ? t('history.filterQuickConnect') : chip.hostName}
+                {chip.deleted && ` ${t('history.deletedHostSuffix')}`}
               </Chip>
             ))}
             {showsSessionChip(activeHostId) && (
@@ -267,17 +345,41 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
                         >
                           <Icon name="insert" size={13} />
                         </IconBtn>
-                        <IconBtn
-                          title={t('history.saveSnippet')}
-                          hoverColorClass="hover:text-lavender"
-                          onClick={() => openSnippetDialog(e.command)}
-                        >
-                          <Icon name="save" size={13} />
-                        </IconBtn>
+                        {e.snippet ? (
+                          <IconBtn
+                            title={
+                              e.snippet.hostId !== undefined && e.snippet.hostId !== activeHostId
+                                ? t('history.savedForHost', {
+                                    // Текущее имя из стора хостов (см. resolveSourceHost выше) —
+                                    // не денормализованное e.hostName, могло устареть после переименования.
+                                    host: hosts.find((h) => h.id === e.snippet!.hostId)?.name ?? e.hostName
+                                  })
+                                : t('history.savedAsSnippet', { name: e.snippet.name })
+                            }
+                            colorClass="text-lavender"
+                            hoverColorClass="hover:text-lavender-light"
+                            onClick={() => goToSnippet(e)}
+                          >
+                            <Icon name="catalog" size={13} />
+                          </IconBtn>
+                        ) : (
+                          <IconBtn
+                            title={t('history.saveSnippet')}
+                            hoverColorClass="hover:text-lavender"
+                            onClick={() => openSnippetDialog(e.command, undefined, resolveSourceHost(e))}
+                          >
+                            <Icon name="save" size={13} />
+                          </IconBtn>
+                        )}
                         <IconBtn
                           title={t('history.delete')}
                           hoverColorClass="hover:text-danger"
-                          onClick={() => void window.lucidSSH.deleteHistoryEntry(e.id).then(refreshHistory)}
+                          onClick={() =>
+                            void window.lucidSSH.deleteHistoryEntry(e.id).then(() => {
+                              refreshHistory();
+                              refreshHostChips();
+                            })
+                          }
                         >
                           <Icon name="trash" size={13} />
                         </IconBtn>
@@ -412,31 +514,70 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
           {clearCopy.body}
         </ConfirmDialog>
       )}
+
+      {deletedChipClearTarget && (
+        <ConfirmDialog
+          title={t('history.clearHostConfirm.title', { host: deletedChipClearTarget.hostName })}
+          confirmLabel={t('history.clearConfirm.confirm')}
+          danger
+          onConfirm={() => void confirmDeletedChipClear()}
+          onCancel={() => setDeletedChipClearTarget(null)}
+        >
+          {t('history.clearHostConfirm.body', {
+            host: deletedChipClearTarget.hostName,
+            count: deletedChipClearCount
+          })}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
 
 function Chip({
   active,
+  muted,
   onClick,
+  onClear,
+  clearLabel,
   children
 }: {
   active: boolean;
+  muted?: boolean;
   onClick: () => void;
+  /** × на таблетке (только удалённые хосты) — очистка истории этого хоста. */
+  onClear?: () => void;
+  clearLabel?: string;
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <span
       className={
-        active
-          ? 'rounded-[20px] border border-accent bg-accent/15 px-[11px] py-1 text-[11.5px] text-lavender-light'
-          : 'rounded-[20px] border border-border-default px-[11px] py-1 text-[11.5px] text-text-muted hover:text-text-body'
+        (active
+          ? 'inline-flex items-center gap-1 rounded-[20px] border border-accent bg-accent/15 py-1 pl-[11px] text-[11.5px] text-lavender-light'
+          : muted
+            ? 'inline-flex items-center gap-1 rounded-[20px] border border-border-hairline py-1 pl-[11px] text-[11.5px] text-text-dim hover:text-text-muted'
+            : 'inline-flex items-center gap-1 rounded-[20px] border border-border-default py-1 pl-[11px] text-[11.5px] text-text-muted hover:text-text-body') +
+        (onClear ? ' pr-[6px]' : ' pr-[11px]')
       }
     >
-      {children}
-    </button>
+      <button type="button" onClick={onClick} className="min-w-0 truncate">
+        {children}
+      </button>
+      {onClear && (
+        <button
+          type="button"
+          title={clearLabel}
+          aria-label={clearLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClear();
+          }}
+          className="flex size-[16px] shrink-0 items-center justify-center rounded-full text-text-dim hover:bg-danger/15 hover:text-danger"
+        >
+          <Icon name="close" size={10} />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -444,12 +585,16 @@ function IconBtn({
   title,
   onClick,
   hoverColorClass,
+  colorClass,
   children
 }: {
   title: string;
   onClick: () => void;
   /** Цвет иконки на hover (как у SnippetRow в каталоге — только цвет, без фона). */
   hoverColorClass: string;
+  /** Базовый цвет вместо text-text-dim — постоянная (не только hover) подсветка,
+   *  напр. лавандовая иконка «catalog» у уже сохранённой команды (SNIP-12). */
+  colorClass?: string;
   children: React.ReactNode;
 }): JSX.Element {
   return (
@@ -458,7 +603,7 @@ function IconBtn({
       title={title}
       aria-label={title}
       onClick={onClick}
-      className={`flex size-[24px] items-center justify-center rounded-[4px] text-text-dim ${hoverColorClass}`}
+      className={`flex size-[24px] items-center justify-center rounded-[4px] ${colorClass ?? 'text-text-dim'} ${hoverColorClass}`}
     >
       {children}
     </button>

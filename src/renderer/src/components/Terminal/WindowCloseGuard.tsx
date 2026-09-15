@@ -16,7 +16,7 @@ import { TmuxHintLink } from '@/components/Terminal/TmuxHintLink';
 export function WindowCloseGuard(): JSX.Element | null {
   const { t } = useTranslation();
   const { update } = useConfig();
-  const { openCatalogQuery } = usePanels();
+  const { openCatalogRequest } = usePanels();
   const [activeCount, setActiveCount] = useState<number | null>(null);
   const [busySessions, setBusySessions] = useState<Array<{ hostName: string; command: string }>>(
     []
@@ -61,7 +61,7 @@ export function WindowCloseGuard(): JSX.Element | null {
           <TmuxHintLink
             onOpen={() => {
               void update('ui.catalogPanelOpen', true);
-              openCatalogQuery('tmux');
+              openCatalogRequest({ tab: 'catalog', query: 'tmux' });
               close();
             }}
           />

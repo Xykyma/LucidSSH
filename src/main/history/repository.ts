@@ -31,6 +31,9 @@ interface HistoryRow {
   note: string | null;
   output: string | null;
   output_truncated: number;
+  snip_id: number | null;
+  snip_name: string | null;
+  snip_host_id: number | null;
 }
 
 function rowToEntry(r: HistoryRow): HistoryEntry {
@@ -47,7 +50,11 @@ function rowToEntry(r: HistoryRow): HistoryEntry {
     hasSecret: r.has_secret === 1,
     note: r.note ?? undefined,
     output: r.output ?? undefined,
-    outputTruncated: r.output_truncated === 1
+    outputTruncated: r.output_truncated === 1,
+    snippet:
+      r.snip_id != null
+        ? { id: r.snip_id, name: r.snip_name!, hostId: r.snip_host_id ?? undefined }
+        : undefined
   };
 }
 
@@ -114,21 +121,51 @@ export function recordHistory(input: HistoryRecordInput): { id: number; hasSecre
   return { id: Number(res.lastInsertRowid), hasSecret };
 }
 
+/**
+ * Пометка «сохранена как сниппет» (SNIP-12, решение 10 spec.md): скалярные
+ * подзапросы — серверный сниппет ЭТОЙ строки (её host_id) и глобальный,
+ * COALESCE отдаёт серверный первым. Правило «тот же сниппет» остаётся в
+ * одном месте с SNIP-11 (findDuplicateSnippet), без второй копии в renderer.
+ * h.host_id IS NULL (Быстрое подключение/без хоста) не матчит host_id
+ * подзапроса srv по равенству (NULL = NULL не true в SQL) — совпадают только
+ * глобальные, как и требует решение 2.
+ *
+ * Скалярные подзапросы, а не LEFT JOIN: findDuplicateSnippet — только
+ * предупреждение при сохранении (SNIP-11), не блокирует его, и в `snippets`
+ * нет UNIQUE(command, host_id) — два сниппета с одинаковой командой в одном
+ * скоупе физически возможны. LEFT JOIN на дубликат размножил бы строку
+ * history (по одной на каждое совпадение); `ORDER BY id LIMIT 1` в подзапросе
+ * гарантирует не больше одного совпадения на сторону независимо от этого.
+ */
 export function listHistory(query?: HistoryQuery): HistoryEntry[] {
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
   if (query?.text) {
     // Поиск по команде и заметке (HIST-03). Секрет замаскирован → не всплывёт.
-    clauses.push("(command LIKE @text OR IFNULL(note, '') LIKE @text)");
+    clauses.push("(h.command LIKE @text OR IFNULL(h.note, '') LIKE @text)");
     params['text'] = `%${query.text}%`;
   }
   if (query?.hostId !== undefined) {
-    clauses.push('host_id = @hostId');
+    clauses.push('h.host_id = @hostId');
     params['hostId'] = query.hostId;
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = openHistoryDb()
-    .prepare(`SELECT * FROM history ${where} ORDER BY started_at DESC LIMIT 2000`)
+    .prepare(
+      `SELECT h.*,
+              COALESCE(
+                (SELECT id FROM snippets WHERE command = h.command AND host_id = h.host_id ORDER BY id LIMIT 1),
+                (SELECT id FROM snippets WHERE command = h.command AND host_id IS NULL ORDER BY id LIMIT 1)
+              ) AS snip_id,
+              COALESCE(
+                (SELECT name FROM snippets WHERE command = h.command AND host_id = h.host_id ORDER BY id LIMIT 1),
+                (SELECT name FROM snippets WHERE command = h.command AND host_id IS NULL ORDER BY id LIMIT 1)
+              ) AS snip_name,
+              (SELECT host_id FROM snippets WHERE command = h.command AND host_id = h.host_id ORDER BY id LIMIT 1) AS snip_host_id
+       FROM history h
+       ${where}
+       ORDER BY h.started_at DESC LIMIT 2000`
+    )
     .all(params) as HistoryRow[];
   return rows.map(rowToEntry);
 }
@@ -161,4 +198,24 @@ export function historyCountForHost(hostId: number): number {
 /** Очистить историю только одного хоста, не трогая записи остальных (HIST-08). */
 export function clearHistoryForHost(hostId: number): void {
   openHistoryDb().prepare('DELETE FROM history WHERE host_id = ?').run(hostId);
+}
+
+/**
+ * Хосты, встречающиеся в истории (таблетки фильтра, HIST-08) — по ВСЕЙ
+ * таблице, а не по странице listHistory (LIMIT 2000): иначе хост, чьи строки
+ * все старше последних 2000, таблетки не получает вовсе. Имя — из самой
+ * свежей строки этого хоста (id как тай-брейк для started_at).
+ * Признак «удалён» (сверка с hosts.db) — на стороне ipc/history.ts: отдельная
+ * БД, JOIN невозможен.
+ */
+export function listHistoryHosts(): { hostId: number; hostName: string }[] {
+  const rows = openHistoryDb()
+    .prepare(
+      `SELECT host_id, host_name FROM history
+       WHERE host_id IS NOT NULL AND id IN (
+         SELECT MAX(id) FROM history WHERE host_id IS NOT NULL GROUP BY host_id
+       )`
+    )
+    .all() as { host_id: number; host_name: string }[];
+  return rows.map((r) => ({ hostId: r.host_id, hostName: r.host_name }));
 }

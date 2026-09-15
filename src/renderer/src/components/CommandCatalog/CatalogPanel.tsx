@@ -21,7 +21,7 @@ export const CatalogPanel = forwardRef<HTMLElement, { width: number; onClose: ()
   function CatalogPanel({ width, onClose }, ref): JSX.Element {
     const { t, i18n } = useTranslation();
     const { sessions, activeSessionId } = useSessions();
-    const { openSnippetDialog, snippetsRevision, catalogQuery, clearCatalogQuery } = usePanels();
+    const { openSnippetDialog, snippetsRevision, catalogRequest, clearCatalogRequest } = usePanels();
     const { config } = useConfig();
     // SET-05(а)/CAT-06: новичковый режим показывает описание флага рядом с
     // ним в чипе; в режиме эксперта чип — только сам флаг, как в макете.
@@ -32,6 +32,7 @@ export const CatalogPanel = forwardRef<HTMLElement, { width: number; onClose: ()
     const [query, setQuery] = useState('');
     const [tab, setTab] = useState<'catalog' | 'server' | 'global'>('catalog');
     const [snippets, setSnippets] = useState<Snippet[]>([]);
+    const [highlightSnippetId, setHighlightSnippetId] = useState<number | null>(null);
     const catStripRef = useRef<HTMLDivElement>(null);
     const tabStripRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -67,14 +68,24 @@ export const CatalogPanel = forwardRef<HTMLElement, { width: number; onClose: ()
       if (tab === 'server' && !hostScope) setTab('catalog');
     }, [tab, hostScope]);
 
-    // WIN-04: ссылка «карточка tmux» из диалога закрытия — разово подставляет
-    // поисковый запрос и переключает на вкладку каталога.
+    // Разовый запрос (решение 9 spec.md «history-snippet-mark», обобщение
+    // WIN-04): вкладка/поиск («карточка tmux» из диалога закрытия) и/или
+    // сниппет для прокрутки+подсветки (SNIP-12, из HistoryDrawer).
     useEffect(() => {
-      if (catalogQuery === null) return;
-      setQuery(catalogQuery);
-      setTab('catalog');
-      clearCatalogQuery();
-    }, [catalogQuery, clearCatalogQuery]);
+      if (catalogRequest === null) return;
+      if (catalogRequest.query !== undefined) setQuery(catalogRequest.query);
+      if (catalogRequest.tab !== undefined) setTab(catalogRequest.tab);
+      if (catalogRequest.snippetId !== undefined) setHighlightSnippetId(catalogRequest.snippetId);
+      clearCatalogRequest();
+    }, [catalogRequest, clearCatalogRequest]);
+
+    // Длительность — как у esh-highlight в global.css (1.6с); сброс раньше
+    // конца CSS-анимации обрежет её на середине видимо для пользователя.
+    useEffect(() => {
+      if (highlightSnippetId === null) return;
+      const timer = setTimeout(() => setHighlightSnippetId(null), 1600);
+      return () => clearTimeout(timer);
+    }, [highlightSnippetId]);
 
     const serverSnips = snippets.filter((s) => s.hostId != null && s.hostId === hostScope?.hostId);
     const globalSnips = snippets.filter((s) => s.hostId == null);
@@ -182,6 +193,7 @@ export const CatalogPanel = forwardRef<HTMLElement, { width: number; onClose: ()
           <SnippetList
             snippets={tab === 'server' ? serverSnips : globalSnips}
             activeHostId={hostScope?.hostId}
+            highlightId={highlightSnippetId}
             onChanged={refreshSnippets}
             onEdit={(s) => openSnippetDialog(s.command, s)}
           />

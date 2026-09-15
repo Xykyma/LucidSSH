@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Snippet } from '@shared/history';
 import { insertIntoComposer } from '@/stores/composerBus';
@@ -29,11 +29,15 @@ function applySortMode(list: Snippet[], mode: SortMode): Snippet[] {
  */
 export function SnippetList({
   snippets,
+  highlightId,
   onChanged,
   onEdit
 }: {
   snippets: Snippet[];
   activeHostId?: number;
+  /** SNIP-12: сниппет прокручивается в видимую область и подсвечивается ~1с
+   *  (решение 9 spec.md «history-snippet-mark») — переход из HistoryDrawer. */
+  highlightId?: number | null;
   onChanged: () => void;
   onEdit: (s: Snippet) => void;
 }): JSX.Element {
@@ -43,8 +47,31 @@ export function SnippetList({
   const [sortMode, setSortMode] = useState<SortMode>('manual');
   const [dragId, setDragId] = useState<number | null>(null);
   const [overRow, setOverRow] = useState<{ id: number; position: 'before' | 'after' } | null>(null);
+  const rowRefs = useRef(new Map<number, HTMLDivElement>());
+  // Вычисляется один раз — не меняется за время жизни панели (решение 9:
+  // «при prefers-reduced-motion — без анимации», ни прокрутки, ни подсветки).
+  const [reducedMotion] = useState(
+    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  );
+
+  // Сброс своего поиска при новой подсветке — иначе целевой сниппет может
+  // быть отфильтрован текстом, оставшимся от прошлого открытия панели, и
+  // scrollIntoView молча ничего не найдёт (rowRefs не содержит невидимых строк).
+  useEffect(() => {
+    if (highlightId != null) setQuery('');
+  }, [highlightId]);
 
   const q = query.trim().toLowerCase();
+
+  // Отдельный эффект от сброса выше: строка появляется в rowRefs только ПОСЛЕ
+  // ре-рендера, вызванного очисткой query (setQuery выше не синхронный) — эта
+  // зависимость от q гарантирует повторный запуск, когда фильтр реально снят.
+  useEffect(() => {
+    if (highlightId == null) return;
+    rowRefs.current
+      .get(highlightId)
+      ?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
+  }, [highlightId, reducedMotion, q]);
   const filtered = useMemo(
     () =>
       snippets.filter(
@@ -124,6 +151,11 @@ export function SnippetList({
               <SnippetRow
                 key={s.id}
                 snippet={s}
+                highlighted={s.id === highlightId}
+                rowRef={(el) => {
+                  if (el) rowRefs.current.set(s.id, el);
+                  else rowRefs.current.delete(s.id);
+                }}
                 onChanged={onChanged}
                 onEdit={onEdit}
                 draggable={dragEnabled}
@@ -146,6 +178,11 @@ export function SnippetList({
               <SnippetRow
                 key={s.id}
                 snippet={s}
+                highlighted={s.id === highlightId}
+                rowRef={(el) => {
+                  if (el) rowRefs.current.set(s.id, el);
+                  else rowRefs.current.delete(s.id);
+                }}
                 onChanged={onChanged}
                 onEdit={onEdit}
                 draggable={dragEnabled}
@@ -191,6 +228,8 @@ function Group({
 
 function SnippetRow({
   snippet,
+  highlighted,
+  rowRef,
   onChanged,
   onEdit,
   draggable,
@@ -202,6 +241,9 @@ function SnippetRow({
   onDragEndReorder
 }: {
   snippet: Snippet;
+  /** SNIP-12: подсветка после перехода из HistoryDrawer (см. SnippetList). */
+  highlighted?: boolean;
+  rowRef: (el: HTMLDivElement | null) => void;
   onChanged: () => void;
   onEdit: (s: Snippet) => void;
   draggable: boolean;
@@ -222,6 +264,7 @@ function SnippetRow({
         : '';
   return (
     <div
+      ref={rowRef}
       draggable={draggable}
       onDragStart={(e) => {
         if (!draggable) return;
@@ -248,7 +291,8 @@ function SnippetRow({
       onDragEnd={onDragEndReorder}
       className={
         `group relative flex items-center gap-2 rounded-[5px] border-b border-border-hairline px-2 py-[8px] hover:bg-bg-elevated${isDragging ? ' opacity-40' : ''}` +
-        (indicatorClass ? ` ${indicatorClass}` : '')
+        (indicatorClass ? ` ${indicatorClass}` : '') +
+        (highlighted ? ' esh-highlight-once' : '')
       }
       onClick={() => insertIntoComposer(snippet.command)}
       role="button"

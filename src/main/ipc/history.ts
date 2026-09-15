@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '@shared/ipc';
-import type { HistoryEntry, HistoryQuery, Snippet } from '@shared/history';
+import type { HistoryEntry, HistoryHostChip, HistoryQuery, Snippet } from '@shared/history';
+import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
 import {
   addHistoryNote,
   clearHistory,
@@ -8,8 +9,10 @@ import {
   deleteHistoryEntry,
   historyCountForHost,
   listHistory,
+  listHistoryHosts,
   totalHistoryCount
 } from '../history/repository';
+import { listHosts } from '../hosts/repository';
 import {
   createSnippet,
   deleteSnippet,
@@ -81,6 +84,21 @@ export function registerHistoryIpcHandlers(): void {
   ipcMain.handle(IPC.historyClearForHost, (event, rawHostId: unknown): void => {
     assertSenderIsMainWindow(event);
     clearHistoryForHost(validateHistoryHostId(rawHostId));
+  });
+
+  // Таблетки фильтра (HIST-08) — вся история; «удалён» решается здесь: две
+  // разные БД (history.db/hosts.db), сверка не через JOIN. QUICK_CONNECT_HOST_ID
+  // удалённым не бывает — это не хост, а сентинел Быстрого подключения.
+  // listHosts() один раз, не getHost() в цикле — число хостов, когда-либо
+  // встретившихся в истории, не ограничено (растёт за годы, не только
+  // текущими хостами), N отдельных SELECT на каждое открытие дровера того не стоят.
+  ipcMain.handle(IPC.historyListHosts, (event): HistoryHostChip[] => {
+    assertSenderIsMainWindow(event);
+    const liveHostIds = new Set(listHosts().map((h) => h.id));
+    return listHistoryHosts().map((h) => ({
+      ...h,
+      deleted: h.hostId !== QUICK_CONNECT_HOST_ID && !liveHostIds.has(h.hostId)
+    }));
   });
 
   // --- Сниппеты ---

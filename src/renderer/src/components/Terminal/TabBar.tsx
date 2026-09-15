@@ -42,7 +42,7 @@ export function TabBar({
   const { sessions, activeSessionId, select, closeTab, connect, renameTab, reorderTab } =
     useSessions();
   const { update } = useConfig();
-  const { openCatalogQuery } = usePanels();
+  const { openCatalogRequest } = usePanels();
   const [closeTarget, setCloseTarget] = useState<SessionInfo | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -86,7 +86,7 @@ export function TabBar({
 
   const openTmuxCard = (): void => {
     void update('ui.catalogPanelOpen', true);
-    openCatalogQuery('tmux');
+    openCatalogRequest({ tab: 'catalog', query: 'tmux' });
     setCloseTarget(null);
   };
 
