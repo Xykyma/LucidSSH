@@ -510,6 +510,8 @@
     "searchClear": "Clear search",
     "filterAll": "All",
     "filterSession": "This session",
+    "deletedHostSuffix": "(deleted)",
+    "clearDeletedHostChip": "Clear this host's history",
     "secretHidden": "SECRET HIDDEN",
     "confirmed": "Confirmed",
     "blocked": "Blocked",

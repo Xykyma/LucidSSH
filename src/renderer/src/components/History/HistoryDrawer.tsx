@@ -45,6 +45,26 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
   const [clearHostCount, setClearHostCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // × на таблетке удалённого хоста — отдельный диалог, не завязанный на
+  // hostFilter/clearTarget: клик не должен менять текущий фильтр, если
+  // пользователь отменит очистку (решение 5, spec.md).
+  const [deletedChipClearTarget, setDeletedChipClearTarget] = useState<HistoryHostChip | null>(null);
+  const [deletedChipClearCount, setDeletedChipClearCount] = useState(0);
+
+  const openDeletedChipClear = async (chip: HistoryHostChip): Promise<void> => {
+    setDeletedChipClearCount(await window.lucidSSH.historyCountForHost(chip.hostId));
+    setDeletedChipClearTarget(chip);
+  };
+
+  const confirmDeletedChipClear = async (): Promise<void> => {
+    if (!deletedChipClearTarget) return;
+    await window.lucidSSH.clearHistoryForHost(deletedChipClearTarget.hostId);
+    if (hostFilter === deletedChipClearTarget.hostId) setHostFilter('all');
+    setDeletedChipClearTarget(null);
+    refreshHistory();
+    refreshHostChips();
+  };
+
   // «Эта сессия» очищает по хосту активной сессии, а не всё сразу (HIST-08);
   // Быстрое подключение — отдельная цель, не «хост» (см. historyHostFilter.ts).
   const clearTarget = resolveClearTarget(hostFilter, activeHostId);
@@ -207,9 +227,13 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
               <Chip
                 key={chip.hostId}
                 active={hostFilter === chip.hostId}
+                muted={chip.deleted}
                 onClick={() => setHostFilter(chip.hostId)}
+                onClear={chip.deleted ? () => void openDeletedChipClear(chip) : undefined}
+                clearLabel={t('history.clearDeletedHostChip')}
               >
                 {chip.hostId === QUICK_CONNECT_HOST_ID ? t('history.filterQuickConnect') : chip.hostName}
+                {chip.deleted && ` ${t('history.deletedHostSuffix')}`}
               </Chip>
             ))}
             {showsSessionChip(activeHostId) && (
@@ -426,31 +450,70 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
           {clearCopy.body}
         </ConfirmDialog>
       )}
+
+      {deletedChipClearTarget && (
+        <ConfirmDialog
+          title={t('history.clearHostConfirm.title', { host: deletedChipClearTarget.hostName })}
+          confirmLabel={t('history.clearConfirm.confirm')}
+          danger
+          onConfirm={() => void confirmDeletedChipClear()}
+          onCancel={() => setDeletedChipClearTarget(null)}
+        >
+          {t('history.clearHostConfirm.body', {
+            host: deletedChipClearTarget.hostName,
+            count: deletedChipClearCount
+          })}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
 
 function Chip({
   active,
+  muted,
   onClick,
+  onClear,
+  clearLabel,
   children
 }: {
   active: boolean;
+  muted?: boolean;
   onClick: () => void;
+  /** × на таблетке (только удалённые хосты) — очистка истории этого хоста. */
+  onClear?: () => void;
+  clearLabel?: string;
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <span
       className={
-        active
-          ? 'rounded-[20px] border border-accent bg-accent/15 px-[11px] py-1 text-[11.5px] text-lavender-light'
-          : 'rounded-[20px] border border-border-default px-[11px] py-1 text-[11.5px] text-text-muted hover:text-text-body'
+        (active
+          ? 'inline-flex items-center gap-1 rounded-[20px] border border-accent bg-accent/15 py-1 pl-[11px] text-[11.5px] text-lavender-light'
+          : muted
+            ? 'inline-flex items-center gap-1 rounded-[20px] border border-border-hairline py-1 pl-[11px] text-[11.5px] text-text-dim hover:text-text-muted'
+            : 'inline-flex items-center gap-1 rounded-[20px] border border-border-default py-1 pl-[11px] text-[11.5px] text-text-muted hover:text-text-body') +
+        (onClear ? ' pr-[6px]' : ' pr-[11px]')
       }
     >
-      {children}
-    </button>
+      <button type="button" onClick={onClick} className="min-w-0 truncate">
+        {children}
+      </button>
+      {onClear && (
+        <button
+          type="button"
+          title={clearLabel}
+          aria-label={clearLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClear();
+          }}
+          className="flex size-[16px] shrink-0 items-center justify-center rounded-full text-text-dim hover:bg-danger/15 hover:text-danger"
+        >
+          <Icon name="close" size={10} />
+        </button>
+      )}
+    </span>
   );
 }
 
