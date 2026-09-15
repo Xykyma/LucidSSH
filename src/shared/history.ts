@@ -20,6 +20,12 @@ export interface HistoryEntry {
   note?: string;
   output?: string; // маскированный и усечённый (см. history/repository.ts); undefined = не сохранён
   outputTruncated?: boolean;
+  /** Пометка «уже сохранена как сниппет» (SNIP-12) — вычисляется в listHistory,
+   * не хранится: команда совпадает с сохранённым сниппетом ПРЯМО СЕЙЧАС.
+   * Серверный сниппет хоста этой строки приоритетнее глобального (решение 2/10
+   * spec.md). hostId в snippet — undefined для глобального, иначе тот же
+   * hostId, что и у строки (server-match ищется только в её собственном скоупе). */
+  snippet?: { id: number; name: string; hostId?: number };
 }
 
 /** Таблетка хоста в фильтре истории (HIST-08) — по всей истории, не по текущей странице. */

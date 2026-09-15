@@ -32,9 +32,19 @@ function relativeTime(iso: string, t: (k: string, o?: Record<string, number>) =>
   return t('history.time.days', { count: Math.floor(h / 24) });
 }
 
-export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.Element {
+export function HistoryDrawer({
+  activeHostId,
+  onOpenCatalog
+}: {
+  activeHostId?: number;
+  /** Переход в каталог по клику на пометку «сохранено» (SNIP-12, решение 8
+   *  spec.md): target задан — сохранённая вкладка+сниппет видимы и получают
+   *  прокрутку+подсветку; не задан — каталог просто открывается (серверный
+   *  сниппет чужого хоста, или нет активной сессии для серверного). */
+  onOpenCatalog: (target?: { tab: 'server' | 'global'; snippetId: number }) => void;
+}): JSX.Element {
   const { t } = useTranslation();
-  const { closeHistory, openSnippetDialog, historyRevision } = usePanels();
+  const { closeHistory, openSnippetDialog, historyRevision, snippetsRevision } = usePanels();
   const { hosts } = useHosts();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -118,7 +128,10 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     refreshHistory();
     // historyRevision: перечитать при записи новой команды, даже пока панель открыта
     // (main шлёт ev:history-recorded — иначе список замирает на моменте открытия).
-  }, [refreshHistory, historyRevision]);
+    // snippetsRevision: пометка «сохранено» (SNIP-12) считается в listHistory —
+    // диалог сохранения открывается поверх дровера (z-[60] над z-50), без
+    // перечитывания пометка не появится, пока дровер не переоткроют.
+  }, [refreshHistory, historyRevision, snippetsRevision]);
 
   useEffect(() => {
     refreshHostChips();
@@ -181,6 +194,22 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     },
     [hosts]
   );
+
+  // Клик по пометке «сохранено» (решение 8 spec.md): цель — сниппет, видимый
+  // СЕЙЧАС в каталоге. Серверный — только если хост строки (=хост сниппета,
+  // см. решение 2/10) совпадает с активной вкладкой; иначе (чужой хост или
+  // нет активной сессии) видимой цели нет — каталог открывается без перехода.
+  const goToSnippet = (e: HistoryEntry): void => {
+    if (!e.snippet) return;
+    closeHistory();
+    if (e.snippet.hostId === undefined) {
+      onOpenCatalog({ tab: 'global', snippetId: e.snippet.id });
+    } else if (e.snippet.hostId === activeHostId) {
+      onOpenCatalog({ tab: 'server', snippetId: e.snippet.id });
+    } else {
+      onOpenCatalog();
+    }
+  };
 
   const backdrop = useBackdropClose(closeHistory);
 
@@ -316,13 +345,28 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
                         >
                           <Icon name="insert" size={13} />
                         </IconBtn>
-                        <IconBtn
-                          title={t('history.saveSnippet')}
-                          hoverColorClass="hover:text-lavender"
-                          onClick={() => openSnippetDialog(e.command, undefined, resolveSourceHost(e))}
-                        >
-                          <Icon name="save" size={13} />
-                        </IconBtn>
+                        {e.snippet ? (
+                          <IconBtn
+                            title={
+                              e.snippet.hostId !== undefined && e.snippet.hostId !== activeHostId
+                                ? t('history.savedForHost', { host: e.hostName })
+                                : t('history.savedAsSnippet', { name: e.snippet.name })
+                            }
+                            colorClass="text-lavender"
+                            hoverColorClass="hover:text-lavender-light"
+                            onClick={() => goToSnippet(e)}
+                          >
+                            <Icon name="catalog" size={13} />
+                          </IconBtn>
+                        ) : (
+                          <IconBtn
+                            title={t('history.saveSnippet')}
+                            hoverColorClass="hover:text-lavender"
+                            onClick={() => openSnippetDialog(e.command, undefined, resolveSourceHost(e))}
+                          >
+                            <Icon name="save" size={13} />
+                          </IconBtn>
+                        )}
                         <IconBtn
                           title={t('history.delete')}
                           hoverColorClass="hover:text-danger"
@@ -537,12 +581,16 @@ function IconBtn({
   title,
   onClick,
   hoverColorClass,
+  colorClass,
   children
 }: {
   title: string;
   onClick: () => void;
   /** Цвет иконки на hover (как у SnippetRow в каталоге — только цвет, без фона). */
   hoverColorClass: string;
+  /** Базовый цвет вместо text-text-dim — постоянная (не только hover) подсветка,
+   *  напр. лавандовая иконка «catalog» у уже сохранённой команды (SNIP-12). */
+  colorClass?: string;
   children: React.ReactNode;
 }): JSX.Element {
   return (
@@ -551,7 +599,7 @@ function IconBtn({
       title={title}
       aria-label={title}
       onClick={onClick}
-      className={`flex size-[24px] items-center justify-center rounded-[4px] text-text-dim ${hoverColorClass}`}
+      className={`flex size-[24px] items-center justify-center rounded-[4px] ${colorClass ?? 'text-text-dim'} ${hoverColorClass}`}
     >
       {children}
     </button>

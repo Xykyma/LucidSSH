@@ -28,6 +28,18 @@ interface HelpTarget {
   anchor?: string;
 }
 
+/**
+ * Разовый запрос к CatalogPanel (обобщение WIN-04 под SNIP-12, решение 9
+ * spec.md «history-snippet-mark»): вкладка каталога, поисковый запрос
+ * (WIN-04, напр. «tmux») и/или сниппет для прокрутки+подсветки. CatalogPanel
+ * применяет и сама сбрасывает — как и раньше с catalogQuery.
+ */
+interface CatalogRequest {
+  tab?: 'catalog' | 'server' | 'global';
+  query?: string;
+  snippetId?: number;
+}
+
 interface PanelsStore {
   historyOpen: boolean;
   openHistory: () => void;
@@ -56,12 +68,12 @@ interface PanelsStore {
     sourceHost?: { hostId?: number; hostName?: string }
   ) => void;
   closeSnippetDialog: () => void;
-  /** WIN-04: поисковый запрос, который CatalogPanel должна подставить при
-   *  открытии по ссылке из диалога закрытия (напр. карточка tmux). Разово —
-   *  CatalogPanel сама сбрасывает после применения. */
-  catalogQuery: string | null;
-  openCatalogQuery: (query: string) => void;
-  clearCatalogQuery: () => void;
+  /** Разовый запрос к CatalogPanel — вкладка/поиск (WIN-04) и/или сниппет для
+   *  прокрутки и подсветки (SNIP-12). CatalogPanel сама сбрасывает после
+   *  применения. */
+  catalogRequest: CatalogRequest | null;
+  openCatalogRequest: (request: CatalogRequest) => void;
+  clearCatalogRequest: () => void;
   /** Ревизия сниппетов: инкремент после сохранения → HistoryDrawer перечитывает список. */
   snippetsRevision: number;
   bumpSnippets: () => void;
@@ -81,7 +93,7 @@ export function PanelsProvider({ children }: { children: ReactNode }): JSX.Eleme
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpTarget, setHelpTarget] = useState<HelpTarget | null>(null);
   const [snippetDialog, setSnippetDialog] = useState<SnippetDialogState | null>(null);
-  const [catalogQuery, setCatalogQuery] = useState<string | null>(null);
+  const [catalogRequest, setCatalogRequest] = useState<CatalogRequest | null>(null);
   const [snippetsRevision, setSnippetsRevision] = useState(0);
   const [historyRevision, setHistoryRevision] = useState(0);
 
@@ -118,9 +130,9 @@ export function PanelsProvider({ children }: { children: ReactNode }): JSX.Eleme
       openSnippetDialog: (command, editSnippet, sourceHost) =>
         setSnippetDialog({ command, editSnippet, sourceHost }),
       closeSnippetDialog: () => setSnippetDialog(null),
-      catalogQuery,
-      openCatalogQuery: (query) => setCatalogQuery(query),
-      clearCatalogQuery: () => setCatalogQuery(null),
+      catalogRequest,
+      openCatalogRequest: (request) => setCatalogRequest(request),
+      clearCatalogRequest: () => setCatalogRequest(null),
       snippetsRevision,
       bumpSnippets: () => setSnippetsRevision((v) => v + 1),
       historyRevision
@@ -134,7 +146,7 @@ export function PanelsProvider({ children }: { children: ReactNode }): JSX.Eleme
       helpOpen,
       helpTarget,
       snippetDialog,
-      catalogQuery,
+      catalogRequest,
       snippetsRevision,
       historyRevision
     ]

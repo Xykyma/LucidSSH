@@ -31,6 +31,9 @@ interface HistoryRow {
   note: string | null;
   output: string | null;
   output_truncated: number;
+  snip_id: number | null;
+  snip_name: string | null;
+  snip_host_id: number | null;
 }
 
 function rowToEntry(r: HistoryRow): HistoryEntry {
@@ -47,7 +50,11 @@ function rowToEntry(r: HistoryRow): HistoryEntry {
     hasSecret: r.has_secret === 1,
     note: r.note ?? undefined,
     output: r.output ?? undefined,
-    outputTruncated: r.output_truncated === 1
+    outputTruncated: r.output_truncated === 1,
+    snippet:
+      r.snip_id != null
+        ? { id: r.snip_id, name: r.snip_name!, hostId: r.snip_host_id ?? undefined }
+        : undefined
   };
 }
 
@@ -114,21 +121,40 @@ export function recordHistory(input: HistoryRecordInput): { id: number; hasSecre
   return { id: Number(res.lastInsertRowid), hasSecret };
 }
 
+/**
+ * Пометка «сохранена как сниппет» (SNIP-12, решение 10 spec.md): LEFT JOIN
+ * по команде и области — серверный сниппет ЭТОЙ строки (её host_id) и
+ * глобальный, COALESCE отдаёт серверный первым. Правило «тот же сниппет»
+ * остаётся в одном месте с SNIP-11 (findDuplicateSnippet), без второй копии
+ * в renderer. h.host_id IS NULL (Быстрое подключение/без хоста) не матчит
+ * srv.host_id по равенству (NULL = NULL не true в SQL) — совпадают только
+ * глобальные, как и требует решение 2.
+ */
 export function listHistory(query?: HistoryQuery): HistoryEntry[] {
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
   if (query?.text) {
     // Поиск по команде и заметке (HIST-03). Секрет замаскирован → не всплывёт.
-    clauses.push("(command LIKE @text OR IFNULL(note, '') LIKE @text)");
+    clauses.push("(h.command LIKE @text OR IFNULL(h.note, '') LIKE @text)");
     params['text'] = `%${query.text}%`;
   }
   if (query?.hostId !== undefined) {
-    clauses.push('host_id = @hostId');
+    clauses.push('h.host_id = @hostId');
     params['hostId'] = query.hostId;
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = openHistoryDb()
-    .prepare(`SELECT * FROM history ${where} ORDER BY started_at DESC LIMIT 2000`)
+    .prepare(
+      `SELECT h.*,
+              COALESCE(srv.id, glb.id) AS snip_id,
+              COALESCE(srv.name, glb.name) AS snip_name,
+              srv.host_id AS snip_host_id
+       FROM history h
+       LEFT JOIN snippets srv ON srv.command = h.command AND srv.host_id = h.host_id
+       LEFT JOIN snippets glb ON glb.command = h.command AND glb.host_id IS NULL
+       ${where}
+       ORDER BY h.started_at DESC LIMIT 2000`
+    )
     .all(params) as HistoryRow[];
   return rows.map(rowToEntry);
 }

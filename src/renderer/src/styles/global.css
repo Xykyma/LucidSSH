@@ -148,6 +148,24 @@ body {
     opacity: 0.3;
   }
 }
+@keyframes esh-highlight {
+  from {
+    background-color: rgba(99, 102, 241, 0.35);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+/* Указание на сниппет из HistoryDrawer (SNIP-12) — короткая подсветка строки.
+   Без анимации при prefers-reduced-motion (решение 9, .scratch/history-snippet-mark). */
+.esh-highlight-once {
+  animation: esh-highlight 1s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .esh-highlight-once {
+    animation: none;
+  }
+}
 
 /* Зоны перетаскивания окна (кастомный тайтл-бар) */
 .app-drag {

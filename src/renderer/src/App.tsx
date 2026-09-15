@@ -58,7 +58,8 @@ function AppBody(): JSX.Element {
     openHelp,
     quickConnectOpen,
     openQuickConnect,
-    closeQuickConnect
+    closeQuickConnect,
+    openCatalogRequest
   } = usePanels();
   const { addFingerprintEvent } = useEvents();
   const [previewWelcome, setPreviewWelcome] = useState(false);
@@ -172,7 +173,15 @@ function AppBody(): JSX.Element {
         />
       )}
       <WindowCloseGuard />
-      {historyOpen && <HistoryDrawer activeHostId={activeSession?.hostId} />}
+      {historyOpen && (
+        <HistoryDrawer
+          activeHostId={activeSession?.hostId}
+          onOpenCatalog={(target) => {
+            void update('ui.catalogPanelOpen', true);
+            if (target) openCatalogRequest(target);
+          }}
+        />
+      )}
       {settingsOpen && <SettingsScreen onOpenGuide={() => openHelp()} />}
       {snippetDialog && (
         <SnippetSaveDialog

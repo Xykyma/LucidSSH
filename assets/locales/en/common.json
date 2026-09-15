@@ -519,6 +519,8 @@
     "copy": "Copy",
     "insert": "Insert into input",
     "saveSnippet": "Save as snippet",
+    "savedAsSnippet": "Saved as snippet \"{{name}}\"",
+    "savedForHost": "Saved for host \"{{host}}\"",
     "addNote": "Add a note",
     "deleteNote": "Delete note",
     "notePlaceholder": "Note for the command…",
