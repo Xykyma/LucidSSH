@@ -79,11 +79,11 @@ export const CatalogPanel = forwardRef<HTMLElement, { width: number; onClose: ()
       clearCatalogRequest();
     }, [catalogRequest, clearCatalogRequest]);
 
-    // Подсветка держится ~1с (решение 9) — дольше самой CSS-анимации не нужна,
-    // сброс снимает временный highlighted-класс со строки в SnippetList.
+    // Длительность — как у esh-highlight в global.css (1.6с); сброс раньше
+    // конца CSS-анимации обрежет её на середине видимо для пользователя.
     useEffect(() => {
       if (highlightSnippetId === null) return;
-      const timer = setTimeout(() => setHighlightSnippetId(null), 1000);
+      const timer = setTimeout(() => setHighlightSnippetId(null), 1600);
       return () => clearTimeout(timer);
     }, [highlightSnippetId]);
 

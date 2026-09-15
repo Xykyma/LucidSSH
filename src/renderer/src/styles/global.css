@@ -149,17 +149,21 @@ body {
   }
 }
 @keyframes esh-highlight {
-  from {
+  /* Держим полный цвет первую половину времени, гаснем только во второй —
+     с `ease-out` на from/to цвет уходил к прозрачному почти сразу и подсветка
+     читалась как быстрый мигок, а не как заметное выделение строки. */
+  0%,
+  50% {
     background-color: rgba(99, 102, 241, 0.35);
   }
-  to {
+  100% {
     background-color: transparent;
   }
 }
 /* Указание на сниппет из HistoryDrawer (SNIP-12) — короткая подсветка строки.
    Без анимации при prefers-reduced-motion (решение 9, .scratch/history-snippet-mark). */
 .esh-highlight-once {
-  animation: esh-highlight 1s ease-out;
+  animation: esh-highlight 1.6s ease-in-out;
 }
 @media (prefers-reduced-motion: reduce) {
   .esh-highlight-once {
