@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { HistoryEntry } from '@shared/history';
+import type { HistoryEntry, HistoryHostChip } from '@shared/history';
 import { isSignalExitCode } from '@shared/ssh';
 import { insertIntoComposer } from '@/stores/composerBus';
 import { usePanels } from '@/stores/panels';
@@ -75,6 +75,7 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     // откатываемся к полной очистке.
     setClearConfirmOpen(false);
     refreshHistory();
+    refreshHostChips();
   };
 
   const refreshHistory = useCallback(() => {
@@ -82,29 +83,33 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
     void window.lucidSSH.historyCount().then(setTotal);
   }, [query]);
 
+  // Таблетки — отдельный запрос по всей истории (HIST-08), не из страницы
+  // listHistory (LIMIT 2000): иначе хост, чьи строки все старше, таблетки не
+  // получает, а поиск с нулём совпадений стирал бы чип и имя хоста в диалоге
+  // очистки (живой дефект до этой миграции).
+  const [hostChips, setHostChips] = useState<HistoryHostChip[]>([]);
+  const refreshHostChips = useCallback(() => {
+    void window.lucidSSH.listHistoryHosts().then(setHostChips);
+  }, []);
+
   useEffect(() => {
     refreshHistory();
     // historyRevision: перечитать при записи новой команды, даже пока панель открыта
     // (main шлёт ev:history-recorded — иначе список замирает на моменте открытия).
   }, [refreshHistory, historyRevision]);
 
+  useEffect(() => {
+    refreshHostChips();
+  }, [refreshHostChips, historyRevision]);
+
   useEscapeClose('history-drawer', closeHistory);
-
-  // Имена хостов копятся за время жизни дровера, а не пересчитываются с нуля
-  // из текущего entries: иначе поиск, сузивший entries до нуля совпадений по
-  // выбранному хосту, стирает и чип, и имя хоста в диалоге подтверждения
-  // очистки (пустое «Очистить историю хоста «»?» перед необратимым удалением).
-  // Мутация ref в теле рендера — принятый паттерн ленивого кеша (не эффект),
-  // без гонок между рендером и useEffect.
-  const hostNamesRef = useRef<Map<number, string>>(new Map());
-  for (const e of entries) if (e.hostId !== undefined) hostNamesRef.current.set(e.hostId, e.hostName);
-
-  const hostChips = [...hostNamesRef.current.entries()];
 
   // Подписи кнопки и диалога очистки — по цели (HIST-08). 'stale' диалог не
   // открывает (см. openClearConfirm), поэтому ему достаются подписи «Все».
   const clearTargetHostName =
-    clearTarget.kind === 'host' ? (hostNamesRef.current.get(clearTarget.hostId) ?? '') : '';
+    clearTarget.kind === 'host'
+      ? (hostChips.find((c) => c.hostId === clearTarget.hostId)?.hostName ?? '')
+      : '';
   const clearCopy =
     clearTarget.kind === 'host'
       ? {
@@ -198,9 +203,13 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
             <Chip active={hostFilter === 'all'} onClick={() => setHostFilter('all')}>
               {t('history.filterAll')}
             </Chip>
-            {hostChips.map(([id, name]) => (
-              <Chip key={id} active={hostFilter === id} onClick={() => setHostFilter(id)}>
-                {id === QUICK_CONNECT_HOST_ID ? t('history.filterQuickConnect') : name}
+            {hostChips.map((chip) => (
+              <Chip
+                key={chip.hostId}
+                active={hostFilter === chip.hostId}
+                onClick={() => setHostFilter(chip.hostId)}
+              >
+                {chip.hostId === QUICK_CONNECT_HOST_ID ? t('history.filterQuickConnect') : chip.hostName}
               </Chip>
             ))}
             {showsSessionChip(activeHostId) && (
@@ -277,7 +286,12 @@ export function HistoryDrawer({ activeHostId }: { activeHostId?: number }): JSX.
                         <IconBtn
                           title={t('history.delete')}
                           hoverColorClass="hover:text-danger"
-                          onClick={() => void window.lucidSSH.deleteHistoryEntry(e.id).then(refreshHistory)}
+                          onClick={() =>
+                            void window.lucidSSH.deleteHistoryEntry(e.id).then(() => {
+                              refreshHistory();
+                              refreshHostChips();
+                            })
+                          }
                         >
                           <Icon name="trash" size={13} />
                         </IconBtn>

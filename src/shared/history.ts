@@ -22,6 +22,13 @@ export interface HistoryEntry {
   outputTruncated?: boolean;
 }
 
+/** Таблетка хоста в фильтре истории (HIST-08) — по всей истории, не по текущей странице. */
+export interface HistoryHostChip {
+  hostId: number;
+  hostName: string; // из самой свежей строки этого хоста
+  deleted: boolean; // hostId не найден в hosts (кроме QUICK_CONNECT_HOST_ID — сентинел, не хост)
+}
+
 export interface HistoryQuery {
   text?: string;
   hostId?: number;

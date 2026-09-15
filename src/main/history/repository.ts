@@ -162,3 +162,23 @@ export function historyCountForHost(hostId: number): number {
 export function clearHistoryForHost(hostId: number): void {
   openHistoryDb().prepare('DELETE FROM history WHERE host_id = ?').run(hostId);
 }
+
+/**
+ * Хосты, встречающиеся в истории (таблетки фильтра, HIST-08) — по ВСЕЙ
+ * таблице, а не по странице listHistory (LIMIT 2000): иначе хост, чьи строки
+ * все старше последних 2000, таблетки не получает вовсе. Имя — из самой
+ * свежей строки этого хоста (id как тай-брейк для started_at).
+ * Признак «удалён» (сверка с hosts.db) — на стороне ipc/history.ts: отдельная
+ * БД, JOIN невозможен.
+ */
+export function listHistoryHosts(): { hostId: number; hostName: string }[] {
+  const rows = openHistoryDb()
+    .prepare(
+      `SELECT host_id, host_name FROM history
+       WHERE host_id IS NOT NULL AND id IN (
+         SELECT MAX(id) FROM history WHERE host_id IS NOT NULL GROUP BY host_id
+       )`
+    )
+    .all() as { host_id: number; host_name: string }[];
+  return rows.map((r) => ({ hostId: r.host_id, hostName: r.host_name }));
+}

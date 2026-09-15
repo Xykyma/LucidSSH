@@ -108,6 +108,7 @@ vi.mock('../history/repository', () => ({
   deleteHistoryEntry: vi.fn(),
   historyCountForHost: vi.fn(),
   listHistory: vi.fn(),
+  listHistoryHosts: vi.fn(),
   totalHistoryCount: vi.fn()
 }));
 

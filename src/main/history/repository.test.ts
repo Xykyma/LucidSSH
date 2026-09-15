@@ -109,3 +109,60 @@ describe('clearHistoryForHost / historyCountForHost', () => {
     expect(repo.historyCountForHost(999)).toBe(0);
   });
 });
+
+/**
+ * Таблетки фильтра истории (HIST-08, .scratch/history-snippet-mark): список
+ * хостов по всей таблице, не по странице listHistory (LIMIT 2000).
+ */
+describe('listHistoryHosts', () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lucidssh-history-test-'));
+  });
+
+  afterEach(async () => {
+    const { closeHistoryDb } = await import('./db');
+    closeHistoryDb();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const rec = (hostId: number, hostName: string) => ({
+    command: `echo ${hostName}`,
+    hostId,
+    hostName,
+    username: 'root'
+  });
+
+  it('включает хосты, чьи строки все старше последних 2000 (вне LIMIT listHistory)', async () => {
+    const repo = await freshRepo();
+    repo.recordHistory(rec(1, 'alpha')); // единственная, старейшая строка хоста 1
+    for (let i = 0; i < 2001; i++) repo.recordHistory(rec(2, 'beta'));
+
+    // Хост 1 вытеснен лимитом 2000 из страницы...
+    expect(repo.listHistory().some((e) => e.hostId === 1)).toBe(false);
+    // ...но не из списка таблеток — он читает всю таблицу.
+    expect(repo.listHistoryHosts().find((c) => c.hostId === 1)).toEqual({
+      hostId: 1,
+      hostName: 'alpha'
+    });
+  });
+
+  it('имя хоста — из самой свежей строки', async () => {
+    const repo = await freshRepo();
+    repo.recordHistory(rec(1, 'alpha-old'));
+    repo.recordHistory(rec(1, 'alpha-new'));
+
+    expect(repo.listHistoryHosts().find((c) => c.hostId === 1)?.hostName).toBe('alpha-new');
+  });
+
+  it('исчезает после clearHistoryForHost', async () => {
+    const repo = await freshRepo();
+    repo.recordHistory(rec(1, 'alpha'));
+    repo.recordHistory(rec(2, 'beta'));
+
+    repo.clearHistoryForHost(1);
+
+    const chips = repo.listHistoryHosts();
+    expect(chips.some((c) => c.hostId === 1)).toBe(false);
+    expect(chips.some((c) => c.hostId === 2)).toBe(true);
+  });
+});

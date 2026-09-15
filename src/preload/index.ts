@@ -17,7 +17,7 @@ import type { SubmitResult } from '@shared/guard';
 import type { Breadcrumb } from '@shared/breadcrumb';
 import type { DashboardAlert, DashboardAlertIssue, DashboardMetrics } from '@shared/dashboard';
 import type { CommandsDatabase, ErrorExplanation } from '@shared/content';
-import type { HistoryEntry, HistoryQuery, Snippet } from '@shared/history';
+import type { HistoryEntry, HistoryHostChip, HistoryQuery, Snippet } from '@shared/history';
 import type { UpdateStatus } from '@shared/updates';
 import type { KeygenGenerateRequest, KeygenGenerateResult } from '@shared/keygen';
 import type { InteractiveProgramName } from '@shared/interactivePrograms';
@@ -224,6 +224,7 @@ const api = {
     ipcRenderer.invoke(IPC.historyCountForHost, hostId),
   clearHistoryForHost: (hostId: number): Promise<void> =>
     ipcRenderer.invoke(IPC.historyClearForHost, hostId),
+  listHistoryHosts: (): Promise<HistoryHostChip[]> => ipcRenderer.invoke(IPC.historyListHosts),
 
   // --- Сниппеты / избранное ---
   listSnippets: (hostId?: number): Promise<Snippet[]> =>
