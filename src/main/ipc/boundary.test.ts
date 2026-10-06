@@ -722,7 +722,7 @@ describe('пункт 4 — сортировка только в пределах
 describe('пункт 5 — allow-list configUpdate', () => {
   const mockSaveConfig = vi.mocked(configStoreModule.saveConfig);
 
-  it.each(['foo', 'language', 'pendingKeyDeployments', 42, null])(
+  it.each(['foo', 'language', 'pendingKeyDeployments', 'updates.source', 42, null])(
     'путь %p — не в allow-list, отказ, saveConfig не вызван',
     async (rawPath) => {
       const result = await invoke(IPC.configUpdate, mainEvent(), rawPath, 14);
