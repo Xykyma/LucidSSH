@@ -31,7 +31,7 @@ LucidSSH follows this scheme:
 5. Version files are hosted on GitHub Releases.
 6. At this stage, the developer builds, verifies, and publishes releases manually from their Windows machine.
 7. The build may later move to GitHub Actions, but publishing a stable release must always require manual confirmation.
-8. Every public stable update must be signed by a single trusted publisher.
+8. Every public stable update must be signed by a single trusted publisher — **N/A for 1.0, unsigned release (see §9)**, a principle for the future.
 9. Previous stable versions are kept on GitHub Releases and never removed without a specific reason.
 
 ## 3. App formats
@@ -204,6 +204,8 @@ Checksum verification must run in the main process. The renderer gets no direct 
 
 ### 8.2 Publisher consistency
 
+**Not applicable to version 1.0.** The release ships with no certificate (§9). The principle for the future follows.
+
 The publisher name and certificate must be chosen before the first stable public release. Changing the publisher name or certificate must be planned separately, since it can break update verification for already-installed versions.
 
 Every signature must carry a trusted timestamp. Thanks to the timestamp, a previously released version stays validly signed even after the certificate expires.
@@ -242,6 +244,8 @@ After enough downloads accumulate with no negative signals, SmartScreen may lowe
 Once the distribution model is settled, returning to signing the stable installer is possible in a future version. The specific path and implementation belong to the roadmap for future versions.
 
 ## 10. SmartScreen
+
+**The requirement wording below applies to signed future versions.** For 1.0, NFR-06 applies: the installer is unsigned, see §9.
 
 A digital signature confirms the publisher and file integrity, but on its own it doesn't guarantee the absence of a Microsoft Defender SmartScreen warning.
 
@@ -314,7 +318,7 @@ Settings must show a link to the update source. The manual-check button must cle
 | GitHub unreachable | Retry later or manually |
 | Not enough disk space | The download stops, a clear message is shown |
 | Corrupted file | The file is deleted, the install never starts |
-| Invalid signature | The update is blocked as potentially unsafe |
+| Invalid signature (N/A for 1.0, unsigned release) | The update is blocked as potentially unsafe |
 | An SSH session is active | Restart only happens after user confirmation |
 | Install failed | The current version stays functional, retry instructions are shown |
 
