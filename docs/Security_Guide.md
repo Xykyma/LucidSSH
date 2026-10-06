@@ -426,13 +426,20 @@ Untested and likely won't work without dedicated work: **fish**, **csh/tcsh** �
 An update must pass several checks:
 
 - downloaded only over HTTPS from a predetermined domain;
-- the installer package carries a digital signature;
-- the expected publisher is verified;
-- a tampered or unsigned package is rejected;
+- package integrity is verified against the checksum published in the GitHub Release (UPD-03);
+- a corrupted package, or one whose checksum doesn't match, is rejected;
 - protection against installing an older, vulnerable version;
 - an atomic install with safe recovery on failure.
 
-HTTPS protects the download in transit, while the digital signature confirms the file's origin and integrity. Both mechanisms are needed.
+**Version 1.0 ships unsigned** (see `Release_and_Update_Strategy.md` §9). So in 1.0 the following do not apply:
+
+- the installer package carries a digital signature;
+- the expected publisher is verified;
+- an unsigned package is rejected.
+
+These three checks return together with signing in a future version.
+
+HTTPS protects the download in transit; the checksum protects against a corrupted file. Only a digital signature confirms the file's origin: the checksum is published in the same GitHub Release as the package itself, so it does not protect against a replaced release. 1.0 does not have this protection — it is a residual risk of shipping unsigned.
 
 The update check is a separately allowed network connection. So the "no external traffic" requirement should be phrased as: the app only ever creates SSH connections, an explicitly initiated update check against a specified domain, and any other separately documented connections.
 
@@ -446,9 +453,9 @@ Supply-chain requirements:
 - keep Electron, `ssh2`, xterm.js, and native modules up to date;
 - minimize the number of dependencies;
 - never load executable code at runtime;
-- keep the signing certificate and its password outside the repository;
+- keep the signing certificate and its password outside the repository — **N/A for 1.0, unsigned release (see §20)**, a principle for the future;
 - never publish secrets in CI logs or artifacts;
-- sign production builds and the installer.
+- sign production builds and the installer — **N/A for 1.0, unsigned release (see §20)**, a principle for the future.
 
 ## 22. External links
 
@@ -492,7 +499,7 @@ Before shipping, verify:
 - commands with common tokens are masked in history;
 - `ProxyCommand`, `LocalCommand`, and `Match exec` are never executed on import;
 - a tampered update is rejected;
-- the production build is signed;
+- the production build is signed — **N/A for 1.0, unsigned release (see §20)**; instead: the SHA-256 checksum is published in the GitHub Release;
 - dependencies have been checked for critical known vulnerabilities.
 
 ## 25. Rule for Claude when writing code
