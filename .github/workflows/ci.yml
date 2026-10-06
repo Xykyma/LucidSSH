@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # No rebuild step: a clean `npm ci` builds better-sqlite3/keytar against
+      # the Node ABI, which is what vitest needs (see CLAUDE.md §9).
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
