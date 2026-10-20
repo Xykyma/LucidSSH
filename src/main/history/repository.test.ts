@@ -42,6 +42,20 @@ describe('prepareOutput', () => {
     expect(grown.output).not.toContain('KEY=a');
   });
 
+  it.each([
+    ['внутри пароля', 'hunter2secret'.length - 4],
+    ['на «:»', 0],
+    ['прямо перед «@»', 'hunter2secret'.length]
+  ])('пароль в URL, усечённый %s, не попадает в вывод', (_name, passwordChars) => {
+    const prefix = ' db://admin:';
+    // граница усечения (4000) падает через passwordChars символов после «:»
+    const pad = 'x'.repeat(4000 - prefix.length - passwordChars);
+    const result = prepareOutput(pad + prefix + 'hunter2secret@host/db ' + 'y'.repeat(500), false);
+    expect(result.output!.length).toBeLessThanOrEqual(4000);
+    expect(result.output).not.toMatch(/hunter|unter2|ter2|2sec|secret/);
+    expect(result.outputTruncated).toBe(true);
+  });
+
   it('не усекает вывод ровно на границе лимита', () => {
     const exact = 'x'.repeat(4000);
     const result = prepareOutput(exact, false);
