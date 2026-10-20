@@ -76,7 +76,7 @@ const US = '\x1f';
 const NONCE_SLOT = '<nonce>';
 /** Тот же формат маркера shell-интеграции, что и в shellIntegrationSession.test.ts. */
 const mk = (u: string, h: string, p: string, e: string, c = '0', sudoUser = ''): string =>
-  `\x1b_lucidssh${NONCE_SLOT}${US}${u}${US}${h}${US}${p}${US}${e}${US}${c}${US}${sudoUser}\x1b\\`;
+  `\x1b_lucidssh${NONCE_SLOT}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${NONCE_SLOT}\x07`;
 
 /** Доводит канал до состояния «первый маркер уже виден» (аналог warmUp() из
  *  shellIntegrationSession.test.ts) — без этого detectInteractiveProgram не
