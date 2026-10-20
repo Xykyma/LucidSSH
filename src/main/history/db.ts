@@ -84,7 +84,7 @@ export function openHistoryDb(): Database.Database {
   const path = historyDbPath();
   db = new Database(path);
   db.pragma('journal_mode = WAL');
-  db.pragma('secure_delete = ON'); // HIST-08: освобождённые страницы затираются, VACUUM не нужен
+  db.pragma('secure_delete = ON'); // HIST-08: страницы, освобождённые дальше, затираются (единственный VACUUM — в миграции v5, для страниц до secure_delete)
 
   const current = db.pragma('user_version', { simple: true }) as number;
   if (current < MIGRATIONS.length) {
@@ -97,7 +97,17 @@ export function openHistoryDb(): Database.Database {
     });
     migrate();
     // v5 стёрла вывод: копии, включая только что сделанную, хранят его же
-    if (current > 0 && current < ERASE_OUTPUT_VERSION) purgeHistoryTraces(db);
+    if (current > 0 && current < ERASE_OUTPUT_VERSION) {
+      // secure_delete затирает лишь страницы, освобождённые после его включения;
+      // вывод строк, удалённых в ≤1.0.2, лежит в свободных страницах — один раз
+      // чистим VACUUM-ом (вне транзакции). Сбой не валит запуск: v5 уже закоммичена.
+      try {
+        db.exec('VACUUM');
+      } catch (e) {
+        console.error('history.db: VACUUM после миграции v5 не удался', e);
+      }
+      purgeHistoryTraces(db);
+    }
   }
   return db;
 }
