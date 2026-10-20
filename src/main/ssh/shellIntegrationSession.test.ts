@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ShellIntegrationSession } from './shellIntegrationSession';
+import { ShellIntegrationSession, type ShellIntegrationResult } from './shellIntegrationSession';
 import { shellIntegrationSetup } from './shellIntegration';
 import { excerpt, isEmptyOutput, isNonErrorExitCode } from '../errors/detector';
 import { hasBlockSecret } from '../secrets/maskers';
@@ -38,7 +38,7 @@ describe('ShellIntegrationSession.feed — MOTD и первый маркер', (
     const box = new ShellIntegrationSession(NONCE);
     const result = box.feed(mk('nikita', 'web-01', '/home/nikita', '1000', '0'));
     expect(result.events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ username: 'nikita' }) }
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ username: 'nikita' }), atPrompt: true }
     ]);
   });
 });
@@ -477,7 +477,7 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     const result = box.feed(`a${forged('/fake', '0', '1')}b${mk('u', 'h', '/srv', '1000', '0')}$ `);
     expect(result.display).toBe('ab$ ');
     expect(result.events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/srv', privilege: 'normal' }) },
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/srv', privilege: 'normal' }), atPrompt: true },
       expect.objectContaining({ kind: 'command-finished', command: 'ls', exitCode: 0, output: 'ab' })
     ]);
   });
@@ -502,7 +502,7 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     const result = box.feed(`${mk('u', 'h', `/tmp/x\x1b\\y${US}0${US}1`, '1000', '0')}$ `);
     expect(result.display).toBe('$ ');
     expect(result.events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/tmp/x\\y01', privilege: 'normal' }) },
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/tmp/x\\y01', privilege: 'normal' }), atPrompt: true },
       expect.objectContaining({ kind: 'command-finished', command: 'cd evil', exitCode: 0 })
     ]);
     expect(box.isBusy()).toBe(false);
@@ -557,7 +557,7 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     const markerA = mk('u', 'h', '/a', '1000', '0', '', nonceA);
     expect(b.feed(markerA).events).toEqual([]);
     expect(a.feed(markerA).events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/a' }) }
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/a' }), atPrompt: true }
     ]);
   });
 
@@ -573,7 +573,116 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     const result = box.feed(mk('root', 'h', '/root', '0', '0', '', nonce));
     expect(result.events[0]).toEqual({
       kind: 'breadcrumb',
-      crumb: expect.objectContaining({ path: '/root', privilege: 'root' })
+      crumb: expect.objectContaining({ path: '/root', privilege: 'root' }),
+      atPrompt: true
     });
+  });
+});
+
+describe('ShellIntegrationSession — многострочная сырая вставка (тикет 18)', () => {
+  const prompt = (p = '/home/u'): string => `${mk('u', 'h', p, '1000', '0')}u@h:${p}$ `;
+  const crumbs = (r: ShellIntegrationResult): boolean[] =>
+    r.events.flatMap((e) => (e.kind === 'breadcrumb' ? [e.atPrompt] : []));
+
+  it('маркеры непоследних строк не возвращают «на промпт», маркер последней — возвращает', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput("echo a\nread -s -p 'Code: ' x; echo\necho b\n");
+
+    // readline тут же печатает следующую строку из очереди — вставка идёт дальше
+    const first = box.feed(`echo a\r\na\r\n${prompt()}read -s -p 'Code: ' x; echo\r\nCode: `);
+    expect(crumbs(first)).toEqual([false]);
+
+    // код, набранный в Code:, — не команда: даже если renderer прислал его
+    // как команду, он уходит сырым и в историю не попадает
+    expect(box.writeCommand('s3cret').toWrite).toBe('s3cret\n');
+    expect(box.runningCommand()).toBeNull();
+
+    const second = box.feed(`\r\n${prompt()}echo b\r\nb\r\n`);
+    expect(crumbs(second)).toEqual([false]);
+    expect(second.events).not.toContainEqual(expect.objectContaining({ command: 's3cret' }));
+
+    const last = box.feed(prompt());
+    expect(crumbs(last)).toEqual([true]);
+    box.writeCommand('ls');
+    expect(box.runningCommand()).toBe('ls');
+  });
+
+  it('строк больше, чем маркеров (heredoc): без эха следующей строки — «на промпт» по таймеру', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput('cat <<EOF\nhello\nEOF\n');
+    const mark = box.feed(`hello\r\n${prompt()}`);
+    expect(crumbs(mark)).toEqual([false]);
+    expect(mark.timerActions).toContainEqual({ timer: 'paste-echo', action: 'schedule', ms: 500 });
+
+    const tick = box.tick('paste-echo');
+    expect(tick.events).toEqual([
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/home/u' }), atPrompt: true }
+    ]);
+    box.writeCommand('ls');
+    expect(box.runningCommand()).toBe('ls');
+  });
+
+  it('эхо следующей строки отменяет таймер', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput('echo a\nsleep 100\necho b\n');
+    box.feed(`a\r\n${prompt()}`);
+    const echo = box.feed('sleep 100\r\n');
+    expect(echo.timerActions).toContainEqual({ timer: 'paste-echo', action: 'cancel' });
+  });
+
+  it('длинная строка, прокрученная readline (видно только её конец), — тоже эхо', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput(`echo a\nperl -MPOSIX -e 'tcflush(0,TCIFLUSH); print "Code: "; $x=<STDIN>; print "got\\n"'\necho b\n`);
+    // снято с bash 4.4 в Docker: начала строки в эхе нет
+    const r = box.feed(`a\r\n${prompt()}\r<IFLUSH); print "Code: "; $x=<STDIN>; print "got\\n"'\r\nCode: `);
+    expect(crumbs(r)).toEqual([false]);
+    expect(r.timerActions.at(-1)).toEqual({ timer: 'paste-echo', action: 'cancel' });
+  });
+
+  it('медленное приглашение после маркера отодвигает таймер, эхо его снимает', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput('echo a\nsleep 100\necho b\n');
+    // вывод первой строки до её маркера таймер не взводит
+    expect(box.feed('echo a\r\na\r\n').timerActions).toEqual([]);
+    box.feed(mk('u', 'h', '/home/u', '1000', '0'));
+    expect(box.feed('u@h:/home/u (main)$ ').timerActions).toEqual([
+      { timer: 'paste-echo', action: 'schedule', ms: 500 }
+    ]);
+    expect(box.feed('sleep 100\r\n').timerActions).toEqual([{ timer: 'paste-echo', action: 'cancel' }]);
+  });
+
+  it('уже выполненная строка в выводе после маркера эхом не считается', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput('echo hello-world\ncat <<EOF\nhi\nEOF\n');
+    box.feed(`hello-world\r\n${prompt()}cat <<EOF\r\n> hi\r\n> EOF\r\nhi\r\n`);
+    // heredoc: 3 строки — один маркер; приглашение повторяет прошлую команду
+    const r = box.feed(`${prompt()}[last: echo hello-world] `);
+    expect(crumbs(r)).toEqual([false]);
+    expect(r.timerActions.at(-1)).toEqual({ timer: 'paste-echo', action: 'schedule', ms: 500 });
+  });
+
+  it('Ctrl+C посреди вставки: следующий настоящий промпт возвращает «на промпт»', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput('echo a\nsleep 100\necho b\n');
+    box.feed(`a\r\n${prompt()}sleep 100\r\n`);
+    box.sendRawInput('\x03');
+    // tty сбросил очередь: echo b не выполнится, маркеров больше не будет
+    expect(crumbs(box.feed(`^C\r\n${prompt()}`))).toEqual([false]);
+    expect(crumbs(box.tick('paste-echo'))).toEqual([true]);
+  });
+
+  it('вставка внутри запущенной программы не считается', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.writeCommand('vim notes');
+    box.sendRawInput('line one\nline two\n');
+    expect(crumbs(box.feed(prompt()))).toEqual([true]);
   });
 });

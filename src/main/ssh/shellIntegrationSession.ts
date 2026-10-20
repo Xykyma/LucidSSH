@@ -36,18 +36,29 @@ export const SETUP_CAP_MS = 2000;
 const ECHO_FLUSH_TIMEOUT_MS = 3000;
 const REINJECT_SILENCE_MS = 800;
 const PENDING_ECHO_TIMEOUT_MS = 1500;
+// Тикет 18: после маркера непоследней строки вставки readline тут же печатает
+// следующую строку из очереди — сервер пишет это одним махом. Отсчёт идёт от
+// последнего вывода без эха; запас — на медленный PS1 (git-prompt) между
+// маркером и приглашением.
+const PASTE_ECHO_WAIT_MS = 500;
+// Сколько символов с края строки вставки ищем в эхе, и строки короче какой
+// длины не ищем вовсе (`ls`, `cd` нашлись бы и в самом приглашении).
+const PASTE_FRAGMENT = 16;
+const MIN_PASTE_FRAGMENT = 3;
 
 /** Именованные таймеры, которыми управляет коробка. Реальные `setTimeout`
  *  остаются у вызывающего — коробка только просит завести/отменить их и
  *  ожидает вызова `tick(timer)`, когда время вышло. */
-export type ShellIntegrationTimer = 'setup-silence' | 'setup-cap' | 'echo-flush' | 'reinject';
+export type ShellIntegrationTimer = 'setup-silence' | 'setup-cap' | 'echo-flush' | 'reinject' | 'paste-echo';
 
 export type TimerAction =
   | { timer: ShellIntegrationTimer; action: 'schedule'; ms: number }
   | { timer: ShellIntegrationTimer; action: 'cancel' };
 
 export type ShellIntegrationEvent =
-  | { kind: 'breadcrumb'; crumb: Breadcrumb }
+  /** atPrompt=false — маркер непоследней строки многострочной сырой вставки
+   *  (тикет 18): шелл сейчас же выполнит следующую, renderer остаётся в сыром вводе. */
+  | { kind: 'breadcrumb'; crumb: Breadcrumb; atPrompt: boolean }
   | {
       kind: 'command-finished';
       command: string;
@@ -80,6 +91,16 @@ export interface ShellIntegrationResult {
   toWrite: string;
   events: ShellIntegrationEvent[];
   timerActions: TimerAction[];
+}
+
+interface PasteInFlight {
+  /** Строки вставки; последняя — текст после последнего перевода строки
+   *  (обычно пустая), маркера она не даёт. */
+  lines: string[];
+  marksSeen: number;
+  /** Вывод после последнего маркера — где ищем эхо строки вставки. */
+  echoTail: string;
+  echoSeen: boolean;
 }
 
 function emptyResult(): ShellIntegrationResult {
@@ -121,6 +142,21 @@ export class ShellIntegrationSession {
   private passwordPromptTail = '';
   /** true между «увидели запрос пароля» и следующим маркером. */
   private passwordPromptActive = false;
+  /** Шелл на приглашении: последний breadcrumb ушёл с atPrompt и с тех пор не
+   *  отправлено ни одного перевода строки — то же, что atPromptState в renderer. */
+  private atPrompt = false;
+  private lastCrumb: Breadcrumb | undefined;
+  /**
+   * Многострочная сырая вставка с приглашения (тикет 18). Переводов строк в
+   * ней — верхняя граница числа маркеров: heredoc, `\`, циклы,
+   * строки, съеденные read/vim/ssh, маркера не дают, а Ctrl+C сбрасывает
+   * очередь tty. Поэтому маркер непоследней строки держит сырой ввод, только
+   * если следом пришло эхо ещё одной строки вставки (readline печатает строку
+   * из очереди); иначе через PASTE_ECHO_WAIT_MS приглашение считается
+   * настоящим. Промах признака даёт прежнее поведение («на промпт»), а не
+   * застрявший сырой ввод мимо Стража.
+   */
+  private paste: PasteInFlight | undefined;
 
   /**
    * nonce маркера (тикет 14): 128 бит на каждый shell-канал. Реинжект после
@@ -166,13 +202,15 @@ export class ShellIntegrationSession {
       this.appendOutput(effective[i] ?? '');
       const mark = marks[i]!;
       this.awaitingFirstMarkAfterSetup = false;
-      result.events.push({ kind: 'breadcrumb', crumb: mark.crumb });
+      this.lastCrumb = mark.crumb;
+      result.events.push({ kind: 'breadcrumb', crumb: mark.crumb, atPrompt: this.atPromptAfterMark(result) });
       this.handleCommandFinished(mark.exitCode, result);
       this.passwordPromptActive = false;
       this.passwordPromptTail = '';
     }
     const afterLastMark = effective[effective.length - 1] ?? '';
     this.appendOutput(afterLastMark);
+    if (this.paste && afterLastMark) this.checkPasteEcho(this.paste, afterLastMark, result);
 
     // TERM-09: явный запрос пароля — событие только на нарастающем фронте.
     // Смотрим лишь вывод после последнего маркера: запрос до маркера уже
@@ -196,7 +234,9 @@ export class ShellIntegrationSession {
     // не трогая lastCommand (история, WIN-04, детектор) — HIST-07, §4 CLAUDE.md.
     // Renderer в этот момент уже не на промпте; сюда пароль попадает, только
     // если сигнал до него не дошёл.
-    if (this.passwordPromptActive) return this.sendRawInput(`${command}\n`);
+    // То же во время многострочной вставки (тикет 18): строку набрали в ответ
+    // программе из вставки, чей запрос PASSWORD_PROMPT_RE не узнал.
+    if (this.passwordPromptActive || this.paste) return this.sendRawInput(`${command}\n`);
     const result = emptyResult();
     this.lastCommand = command.trim();
     this.lastCommandStartedAt = Date.now();
@@ -226,6 +266,11 @@ export class ShellIntegrationSession {
   /** Сырой пользовательский ввод (прямой ввод в терминал, посимвольно или вставкой). */
   sendRawInput(data: string): ShellIntegrationResult {
     const result = emptyResult();
+    const lines = data.split(/\r\n|\r|\n/).map((l) => l.trim());
+    // Один перевод строки — его маркер и так последний, считать нечего.
+    if (this.atPrompt && !this.paste && lines.length > 2) {
+      this.paste = { lines, marksSeen: 0, echoTail: '', echoSeen: false };
+    }
     this.writeRaw(data, result);
     return result;
   }
@@ -279,6 +324,14 @@ export class ShellIntegrationSession {
       case 'reinject':
         this.handleReinjectTick(result);
         break;
+      case 'paste-echo':
+        // Эха следующей строки не было — приглашение настоящее.
+        if (this.paste && this.lastCrumb) {
+          this.paste = undefined;
+          this.atPrompt = true;
+          result.events.push({ kind: 'breadcrumb', crumb: this.lastCrumb, atPrompt: true });
+        }
+        break;
     }
     return result;
   }
@@ -325,7 +378,48 @@ export class ShellIntegrationSession {
       this.outputSinceMark = '';
     }
     this.commandGate.noteInput(data);
+    if (/[\r\n]/.test(data)) this.atPrompt = false;
     result.toWrite += data;
+  }
+
+  /** Маркер пришёл: вернулся ли шелл на приглашение (см. paste). */
+  private atPromptAfterMark(result: ShellIntegrationResult): boolean {
+    const paste = this.paste;
+    if (paste && ++paste.marksSeen < paste.lines.length - 1) {
+      paste.echoTail = '';
+      paste.echoSeen = false;
+      result.timerActions.push({ timer: 'paste-echo', action: 'schedule', ms: PASTE_ECHO_WAIT_MS });
+      return false;
+    }
+    if (this.paste) result.timerActions.push({ timer: 'paste-echo', action: 'cancel' });
+    this.paste = undefined;
+    this.atPrompt = true;
+    return true;
+  }
+
+  /** Вывод после маркера непоследней строки: эхо строки вставки — шелл её
+   *  выполняет, следующий маркер ждём без таймера; иной вывод (медленный PS1,
+   *  свой PROMPT_COMMAND) отодвигает таймер. */
+  private checkPasteEcho(paste: PasteInFlight, text: string, result: ShellIntegrationResult): void {
+    if (paste.echoSeen || paste.marksSeen === 0) return;
+    const tail = (paste.echoTail = (paste.echoTail + stripTerminalControls(text)).slice(-512));
+    // Только строки, которые точно ещё не выполнялись: k маркеров — это не
+    // меньше k строк. Иначе эхом сочли бы приглашение или вывод прошлой строки.
+    // Начало и конец строки, а не вся она: длинную строку readline переносит
+    // или прокручивает (horizontal-scroll), в эхе видна только часть.
+    const echoed = paste.lines
+      .slice(paste.marksSeen)
+      .some(
+        (l) =>
+          l.length >= MIN_PASTE_FRAGMENT &&
+          (tail.includes(l.slice(0, PASTE_FRAGMENT)) || tail.includes(l.slice(-PASTE_FRAGMENT)))
+      );
+    if (echoed) paste.echoSeen = true;
+    result.timerActions.push(
+      echoed
+        ? { timer: 'paste-echo', action: 'cancel' }
+        : { timer: 'paste-echo', action: 'schedule', ms: PASTE_ECHO_WAIT_MS }
+    );
   }
 
   private armSetupIfNeeded(result: ShellIntegrationResult): void {
