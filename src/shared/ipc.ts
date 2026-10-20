@@ -180,7 +180,7 @@ export type RendererEvents = {
     activeCount: number,
     busySessions: Array<{ hostName: string; command: string }>
   ];
-  [IPC.evBreadcrumb]: [sessionId: string, crumb: Breadcrumb];
+  [IPC.evBreadcrumb]: [sessionId: string, crumb: Breadcrumb, atPrompt: boolean];
   [IPC.evDashboard]: [sessionId: string, metrics: DashboardMetrics];
   [IPC.evDashboardAlert]: [sessionId: string, alert: DashboardAlert];
   [IPC.evError]: [sessionId: string, explanation: ErrorExplanation];

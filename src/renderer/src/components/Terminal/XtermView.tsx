@@ -207,7 +207,11 @@ let breadcrumbSubscribed = false;
 function ensureBreadcrumbSubscription(): void {
   if (breadcrumbSubscribed) return;
   breadcrumbSubscribed = true;
-  window.lucidSSH.onBreadcrumb((sessionId) => markAtPrompt(sessionId));
+  // atPrompt=false — маркер непоследней строки многострочной вставки (тикет 18):
+  // считает main, renderer остаётся в сыром вводе до маркера последней.
+  window.lucidSSH.onBreadcrumb((sessionId, _crumb, atPrompt) => {
+    if (atPrompt) markAtPrompt(sessionId);
+  });
   window.lucidSSH.onIntegrationUnconfirmed((sessionId) => markIntegrationUnconfirmed(sessionId));
   window.lucidSSH.onPasswordPrompt((sessionId) => markPasswordPrompt(sessionId));
 }

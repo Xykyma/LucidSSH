@@ -184,7 +184,7 @@ const api = {
     subscribe(IPC.evAuthPrompt, cb),
   onConnectionLog: (cb: (sessionId: string, entry: ConnectionLogEntry) => void): (() => void) =>
     subscribe(IPC.evConnectionLog, cb),
-  onBreadcrumb: (cb: (sessionId: string, crumb: Breadcrumb) => void): (() => void) =>
+  onBreadcrumb: (cb: (sessionId: string, crumb: Breadcrumb, atPrompt: boolean) => void): (() => void) =>
     subscribe(IPC.evBreadcrumb, cb),
   onHistoryRecorded: (cb: () => void): (() => void) => subscribe(IPC.evHistoryRecorded, cb),
   onPasswordPrompt: (cb: (sessionId: string) => void): (() => void) =>
