@@ -656,6 +656,40 @@ describe('Страж целиком — patterns × manager (сквозные т
     }
   });
 
+  describe('сырой путь — управляющие символы редактирования строки не прячут команду', () => {
+    const HIDDEN = [
+      '\x15rm -rf /', // Ctrl+U
+      'x\x08rm -rf ~', // Ctrl+H
+      '\x17rm -rf /x', // Ctrl+W
+      'rm\x01 -rf /', // Ctrl+A внутри команды
+      'x\x7frm -rf ~', // DEL
+      '\x00rm -rf /', // NUL
+      '\x9brm -rf /' // C1 (CSI)
+    ];
+    for (const data of HIDDEN) {
+      it(`${JSON.stringify(data)} — blocked, в pending уходят исходные байты`, () => {
+        const res = submitRawInput('s1', data);
+        expect(res.status).toBe('blocked');
+        if (res.status !== 'blocked') return;
+        expect(mockSendInput).not.toHaveBeenCalled();
+        expect(confirmDangerousCommand(res.prompt.requestId, res.prompt.confirmationText)).toBe(true);
+        expect(mockSendInput).toHaveBeenCalledWith('s1', data);
+      });
+    }
+
+    it('риск доступа (GUARD-07) тоже виден сквозь управляющие символы', () => {
+      const res = submitRawInput('s1', 'xsystemctl stop sshd');
+      expect(res.status).toBe('access-risk');
+      expect(mockSendInput).not.toHaveBeenCalled();
+    });
+
+    it('безобидный текст с управляющими символами — не блокируется, уходит как есть', () => {
+      const data = 'ls\x15 -la\x08 /var/www';
+      expect(submitRawInput('s1', data)).toEqual({ status: 'sent' });
+      expect(mockSendInput).toHaveBeenCalledWith('s1', data);
+    });
+  });
+
   it('инвариант 2 — опасность (analyzeDangers) проверяется раньше риска доступа (GUARD-07)', () => {
     // Составная команда: обе половины разбираются обеими функциями настоящей
     // реализации (splitCompound). Цель берётся из опасного фрагмента, а не с

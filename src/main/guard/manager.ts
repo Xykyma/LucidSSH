@@ -27,6 +27,13 @@ import { t } from '../i18n';
  *  порога — не проверяем вовсе, это неотличимо от посимвольного ввода. */
 const RAW_CHECK_THRESHOLD = 5;
 
+/** Управляющие символы C0 (кроме табуляции и переводов строки), DEL и C1.
+ *  readline применит их как правку строки (Ctrl+U/W/H…): «x», BS, «rm» выполнится
+ *  как `rm`, а паттерну нужен пробел перед `rm`. Заменяем пробелом, не удаляем:
+ *  иначе «x», BS, «rm» стало бы `xrm` и снова прошло бы мимо. */
+// eslint-disable-next-line no-control-regex
+const EDIT_CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
+
 interface Pending {
   sessionId: string;
   command: string;
@@ -51,6 +58,11 @@ function guardEnabledFor(sessionId: string): boolean {
 }
 
 /**
+ * Единственный вызывающий — буфер набранной строки в XtermView, а он копит только
+ * символы, прошедшие stripControlChars (ввод посимвольно, вставка/вставка из
+ * каталога целиком), поэтому управляющих символов здесь нет и нормализация,
+ * как в submitRawInput, не нужна: на сервер уходит ровно то, что видит Страж.
+ *
  * Отправка команды в сессию. Если Страж включён и команда распознана как
  * опасная — команда НЕ уходит на сервер, возвращается запрос подтверждения.
  * Иначе команда отправляется с переводом строки.
@@ -114,9 +126,10 @@ function drawTarget(dangers: DangerMatch[]): DangerMatch {
 function dangerPrompt(
   sessionId: string,
   command: string,
-  mode: 'command' | 'raw'
+  mode: 'command' | 'raw',
+  analyzed = command
 ): DangerousCommandPrompt | null {
-  const dangers = analyzeDangers(command);
+  const dangers = analyzeDangers(analyzed);
   if (dangers.length === 0) return null;
   const chosen = drawTarget(dangers);
   const requestId = randomUUID();
@@ -147,9 +160,10 @@ function dangerPrompt(
 function riskPrompt(
   sessionId: string,
   command: string,
-  mode: 'command' | 'raw'
+  mode: 'command' | 'raw',
+  analyzed = command
 ): AccessRiskPrompt | null {
-  const risk = analyzeAccessRisk(command);
+  const risk = analyzeAccessRisk(analyzed);
   if (!risk) return null;
   const requestId = randomUUID();
   pending.set(requestId, { sessionId, command, confirmationText: '', mode, kind: 'accessRisk' });
@@ -170,9 +184,11 @@ export function submitRawInput(sessionId: string, data: string): SubmitResult {
   if (!sessionExists(sessionId)) return { status: 'sent' }; // неизвестная сессия — sendInput сам no-op
 
   if (data.length >= RAW_CHECK_THRESHOLD && guardEnabledFor(sessionId)) {
-    const danger = dangerPrompt(sessionId, data, 'raw');
+    // Нормализуется только копия для анализа; на сервер уходят исходные байты.
+    const analyzed = data.replace(EDIT_CONTROL_CHARS, ' ');
+    const danger = dangerPrompt(sessionId, data, 'raw', analyzed);
     if (danger) return { status: 'blocked', prompt: danger };
-    const risk = riskPrompt(sessionId, data, 'raw');
+    const risk = riskPrompt(sessionId, data, 'raw', analyzed);
     if (risk) return { status: 'access-risk', prompt: risk };
   }
 
