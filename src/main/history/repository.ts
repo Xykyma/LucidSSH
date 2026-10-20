@@ -16,6 +16,7 @@ const FIFO_LIMIT = 10_000;
 // Лимит на сохранённый вывод команды (разворачивание в HistoryDrawer, Ideas_Backlog.md
 // «Разворачивание вывода по клику»). Длинный вывод усекается, флаг — outputTruncated.
 const OUTPUT_LIMIT = 4000;
+const MASK_LOOKAHEAD = 512;
 
 interface HistoryRow {
   id: number;
@@ -80,10 +81,15 @@ export function prepareOutput(
   // по всему сырому тексту, а не по усечённому: это линейный поиск маркера,
   // а блок за пределами 4000 символов тоже означает «вывод — не для истории»
   if (hasBlockSecret(raw)) return { output: null, outputTruncated: false, outputHasSecret: true };
-  // усекаем до маскирования: маскеру незачем сканировать то, что не сохранится;
-  // и после — маска длиннее короткого значения (KEY=a → KEY=••••••••)
+  // маскируем окно чуть шире лимита, потом усекаем: иначе секрет, разрезанный
+  // границей (`://user:pa|ss@host`), теряет терминатор и остаётся открытым;
+  // вход маскера ограничен (не весь сырой вывод); после — маска длиннее
+  // короткого значения (KEY=a → KEY=••••••••)
+  // ponytail: пароль, уходящий за границу дальше MASK_LOOKAHEAD, не опознается
   const truncated = raw.length > OUTPUT_LIMIT;
-  const { masked, hasSecret } = maskSecrets(truncated ? raw.slice(0, OUTPUT_LIMIT) : raw);
+  const { masked, hasSecret } = maskSecrets(
+    truncated ? raw.slice(0, OUTPUT_LIMIT + MASK_LOOKAHEAD) : raw
+  );
   return {
     output: masked.slice(0, OUTPUT_LIMIT),
     outputTruncated: truncated,
