@@ -168,6 +168,41 @@ describe('history.db — миграция v5 стирает вывод преж�
     expect(bytesOfLiveDb()).not.toContain('legacy-output-marker');
   });
 
+  it('вывод строк, удалённых до обновления без secure_delete (1.0.2), не остаётся в свободных страницах', async () => {
+    await seedV4();
+    const { default: Database } = await import('better-sqlite3');
+    const old = new Database(join(dir, 'history.db'));
+    old.pragma('journal_mode = WAL');
+    const ins = old.prepare(
+      `INSERT INTO history (command, host_name, username, started_at, output) VALUES ('x', 'h', 'u', '2026-01-03', ?)`
+    );
+    for (let i = 0; i < 20; i++) ins.run(`deleted-long-ago-marker ${'y'.repeat(500)}`);
+    old.exec(`DELETE FROM history WHERE command = 'x'`); // secure_delete выключен — как в 1.0.2
+    old.close();
+    expect(bytesOfLiveDb()).toContain('deleted-long-ago-marker');
+
+    (await freshRepo()).listHistory();
+
+    expect(bytesOfLiveDb()).not.toContain('deleted-long-ago-marker');
+  });
+
+  it('сбой VACUUM не роняет запуск: v5 уже закоммичена, вывод стёрт', async () => {
+    await seedV4();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { default: Database } = await import('better-sqlite3');
+    const orig = Database.prototype.exec;
+    vi.spyOn(Database.prototype, 'exec').mockImplementation(function (this: unknown, sql: string) {
+      if (sql === 'VACUUM') throw new Error('disk full');
+      return orig.call(this, sql);
+    });
+
+    const rows = (await freshRepo()).listHistory();
+
+    expect(rows.every((r) => r.output === undefined)).toBe(true);
+    expect(err).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
   it('на свежем профиле копий не создаёт и чужих не удаляет', async () => {
     const stray = join(dir, 'history.db.backup-v1');
     writeFileSync(stray, 'x');
