@@ -10,8 +10,9 @@ import { splitCompound } from '../guard/patterns';
  * PROMPT_COMMAND (bash) / precmd (zsh), которая перед каждым приглашением
  * печатает маркер с текущими user/host/cwd/euid. Значения подставляет сам
  * удалённый shell из своих переменных — недоверенный текст в команду не
- * вставляется. Маркер обёрнут в APC-последовательность (ESC _ … ESC \\) и
- * ВЫРЕЗАЕТСЯ из потока в main до попадания в xterm, поэтому на экране не виден.
+ * вставляется. Маркер начинается APC-последовательностью (ESC _ …), кончается
+ * BEL (см. SESSION_END) и ВЫРЕЗАЕТСЯ из потока в main до попадания в xterm,
+ * поэтому на экране не виден.
  *
  * Маркер несёт nonce сессии (тикет 14): маркер-образную последовательность
  * может напечатать любой вывод сервера (`cat` файла, лог, MOTD, `wall`), а
@@ -21,9 +22,16 @@ import { splitCompound } from '../guard/patterns';
 
 // Разделитель полей — Unit Separator (0x1f), не встречается в путях/именах.
 const US = '\x1f';
-// APC: ESC _  …  ESC \
+// APC: ESC _  …  ESC \ (так кончаются чужие маркеры; наш — см. SESSION_END)
 const APC_START = '\x1b_lucidssh';
 const APC_END = '\x1b\\';
+// Маркер нашей сессии кончается на BEL, а не на ESC \ (найдено на Alpine
+// 20.10.2026): BusyBox ash с FEATURE_EDITING_FANCY_PROMPT разбирает
+// \-последовательности в уже развёрнутом PS1, и `\` из ESC \ склеивался с первым
+// символом приглашения пользователя (`\$` → `#`) — маркер без конца, хвост с
+// nonce на экране, приглашение искажено. BEL ни один shell в PS1 не трогает.
+// Чужие маркеры (без nonce) ищутся до первого ESC \ или BEL и просто вырезаются.
+const SESSION_END = '\x07';
 
 /**
  * Команда настройки интеграции. ТРИ строки (определение функции, диспетчер, вызов-сигнал);
@@ -88,8 +96,8 @@ export const shellIntegrationSetup = (nonce: string): string =>
   // сам даже при env_reset; `su -` окружение чистит — там поле пустое → root.
   // $PWD — ПОСЛЕДНИМ, и за ним nonce ещё раз (тикет 17, F2): имя каталога задаёт
   // сервер. US в нём не сдвинет euid/exit (они левее), а ESC \ в нём не оборвёт
-  // маркер: BreadcrumbParser ищет конец по «US nonce ESC \».
-  ` ${IF_PRINTF_BUILTIN}__lucidssh_mark() { __lc=$?; printf '\\033_lucidssh${nonce}\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037${nonce}\\033\\\\' ` +
+  // маркер: BreadcrumbParser ищет конец по «US nonce BEL».
+  ` ${IF_PRINTF_BUILTIN}__lucidssh_mark() { __lc=$?; printf '\\033_lucidssh${nonce}\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037${nonce}\\007' ` +
   `"\${USER:-$(id -un 2>/dev/null)}" "\${HOSTNAME:-$(hostname 2>/dev/null)}" "$(id -u 2>/dev/null)" "$__lc" "\${SUDO_USER:-}" "$PWD"; };; esac\n` +
   ` ${IF_PRINTF_BUILTIN}if [ -n "$ZSH_VERSION" ]; then autoload -Uz add-zsh-hook 2>/dev/null; add-zsh-hook precmd __lucidssh_mark 2>/dev/null || eval 'precmd_functions+=(__lucidssh_mark)'; ` +
   // bash: маркер через PROMPT_COMMAND, НЕ через встраивание в PS1. Маркер в PS1
@@ -143,7 +151,7 @@ export class BreadcrumbParser {
   /** nonce — тот же, что вшит в shellIntegrationSetup этой сессии. */
   constructor(private readonly nonce: string) {
     this.sessionMarkerStart = APC_START + nonce + US;
-    this.sessionMarkerEnd = US + nonce + APC_END;
+    this.sessionMarkerEnd = US + nonce + SESSION_END;
   }
 
   push(chunk: string): ParseResult {
@@ -156,11 +164,17 @@ export class BreadcrumbParser {
     for (;;) {
       const startIdx = buf.indexOf(APC_START);
       if (startIdx === -1) break;
-      // Маркер нашего shell кончается только на «US nonce ESC \» (тикет 17):
-      // ESC \ в имени каталога не обрывает его раньше — иначе в таком каталоге
+      // Маркер нашего shell кончается только на «US nonce BEL» (тикет 17):
+      // ESC \ или BEL в имени каталога не обрывают его раньше — иначе в таком каталоге
       // хвост с nonce вываливался бы на экран, а приглашение не распознавалось
-      // (и Страж бы молчал). Без nonce в начале — до первого ESC \, как раньше.
-      const terminator = buf.startsWith(this.sessionMarkerStart, startIdx) ? this.sessionMarkerEnd : APC_END;
+      // (и Страж бы молчал). Без nonce в начале — до первого ESC \ или BEL
+      // (BEL — конец маркера другой сессии, например из `cat` записи терминала).
+      const isSession = buf.startsWith(this.sessionMarkerStart, startIdx);
+      const esc = buf.indexOf(APC_END, startIdx);
+      const bel = buf.indexOf(SESSION_END, startIdx);
+      const terminator = isSession
+        ? this.sessionMarkerEnd
+        : bel !== -1 && (esc === -1 || bel < esc) ? SESSION_END : APC_END;
       const endIdx = buf.indexOf(terminator, startIdx);
       // Начало настоящего маркера раньше конца текущего: текущий — висящее
       // начало без конца (подделка из `cat` или наш маркер, оборванный Ctrl+C).
@@ -169,7 +183,7 @@ export class BreadcrumbParser {
       // что за ней — показывается как обычный вывод, а не пропадает.
       const nested = buf.indexOf(this.sessionMarkerStart, startIdx + 1);
       if (nested !== -1 && (endIdx === -1 || nested < endIdx)) {
-        const startLen = terminator === APC_END ? APC_START.length : this.sessionMarkerStart.length;
+        const startLen = isSession ? this.sessionMarkerStart.length : APC_START.length;
         buf = buf.slice(0, startIdx) + buf.slice(startIdx + startLen);
         continue;
       }
@@ -188,8 +202,9 @@ export class BreadcrumbParser {
       }
       cur += buf.slice(0, startIdx);
       const markerEnd = endIdx + terminator.length;
-      // тело — без `ESC _lucidssh` и `ESC \`; «US nonce» в конце остаётся для parseMarker
-      const mark = parseMarker(buf.slice(startIdx + APC_START.length, markerEnd - APC_END.length), this.nonce);
+      // тело — без `ESC _lucidssh` и BEL; «US nonce» в конце остаётся для parseMarker
+      // (у чужого маркера срез неточен, но parseMarker его без nonce всё равно отвергнет)
+      const mark = parseMarker(buf.slice(startIdx + APC_START.length, markerEnd - SESSION_END.length), this.nonce);
       if (mark) {
         marks.push(mark);
         pieces.push(cur);
@@ -312,7 +327,7 @@ export class CommandGate {
   }
 }
 
-/** body — содержимое маркера между `ESC _lucidssh` и завершающим `ESC \`. */
+/** body — содержимое маркера между `ESC _lucidssh` и завершающим BEL. */
 function parseMarker(body: string, nonce: string): ShellMark | null {
   // Формат: nonce US u US h US euid US exit US sudoUser US pwd US nonce.
   // Путь задаёт сервер (имя каталога) — он последний: US в нём уходит в путь,

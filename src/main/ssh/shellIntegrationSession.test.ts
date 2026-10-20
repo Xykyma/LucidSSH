@@ -8,7 +8,7 @@ const US = '\x1f';
 const NONCE = '0123456789abcdef0123456789abcdef';
 const SETUP = shellIntegrationSetup(NONCE);
 const mk = (u: string, h: string, p: string, e: string, c = '0', sudoUser = '', nonce = NONCE): string =>
-  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${nonce}\x1b\\`;
+  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${nonce}\x07`;
 /** Тот же маркер, что напечатал бы `printf` из тикета 14: без nonce. */
 const forged = (p: string, e = '0', c = '0'): string =>
   `\x1b_lucidssh${US}x${US}y${US}${p}${US}${e}${US}${c}${US}\x1b\\`;

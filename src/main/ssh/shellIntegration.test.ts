@@ -15,7 +15,7 @@ const US = '\x1f';
 const NONCE = '0123456789abcdef0123456789abcdef';
 const SETUP = shellIntegrationSetup(NONCE);
 const mk = (u: string, h: string, p: string, e: string, c = '0', sudoUser = '', nonce = NONCE): string =>
-  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${nonce}\x1b\\`;
+  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${nonce}\x07`;
 
 describe('BreadcrumbParser', () => {
   it('вырезает маркер и извлекает breadcrumb + exit code', () => {
@@ -124,6 +124,22 @@ describe('BreadcrumbParser', () => {
     expect(cleaned).toBe(`out${US}x$ `); // хвост подделки — обычный вывод
   });
 
+  it('BEL в имени каталога не обрывает маркер: конец — только «US nonce BEL»', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const { cleaned, marks } = parser.push(`${mk('u', 'h', `/srv/x\x07${US}0${US}1y`, '1000', '0')}$ `);
+    expect(cleaned).toBe('$ ');
+    expect(marks[0]?.crumb).toMatchObject({ path: '/srv/x01y', privilege: 'normal' });
+    expect(marks[0]?.exitCode).toBe(0);
+  });
+
+  it('маркеры из PS1 подряд (ash/dash): каждый принят, приглашение цело', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    // Alpine: до фикса принимался только первый маркер, остальные кончались на `ESC #`
+    const { cleaned, marks } = parser.push(`${mk('root', 'h', '/', '0')}# cd /tmp\r\n${mk('root', 'h', '/tmp', '0')}# `);
+    expect(marks.map((m) => m.crumb.path)).toEqual(['/', '/tmp']);
+    expect(cleaned).toBe('# cd /tmp\r\n# ');
+  });
+
   it('оборванный настоящий маркер не склеивается со следующим', () => {
     const parser = new BreadcrumbParser(NONCE);
     const cutShort = `\x1b_lucidssh${NONCE}${US}u${US}h${US}1000${US}130${US}`;
@@ -163,7 +179,7 @@ describe('BreadcrumbParser', () => {
     expect(parser.push(mk('u', 'h', '/', '0x0', '0')).marks).toHaveLength(0);
     expect(parser.push(mk('u', 'h', '/', '1000', '-1')).marks).toHaveLength(0);
     expect(parser.push(mk('u', 'h', '/', '1000', '1 ')).marks).toHaveLength(0);
-    const short = `\x1b_lucidssh${NONCE}${US}u${US}1000${US}0${US}${US}/${US}${NONCE}\x1b\\`;
+    const short = `\x1b_lucidssh${NONCE}${US}u${US}1000${US}0${US}${US}/${US}${NONCE}\x07`;
     expect(parser.push(short).marks).toHaveLength(0);
   });
 
@@ -316,16 +332,26 @@ describe('shellIntegrationSetup', () => {
   });
 
   it('nonce — только в формате встроенного printf (в начале и в конце маркера), не в argv', () => {
-    const fmt = `printf '\\033_lucidssh${NONCE}\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037${NONCE}\\033\\\\' `;
+    const fmt = `printf '\\033_lucidssh${NONCE}\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037${NONCE}\\007' `;
     expect(SETUP).toContain(fmt);
     expect(SETUP.split(NONCE)).toHaveLength(3); // ровно два вхождения — оба в fmt
     // $PWD — последний аргумент
     expect(SETUP).toContain('"${SUDO_USER:-}" "$PWD"; }');
   });
 
-  it('без сырых управляющих байт: US/ESC только октавами внутри printf', () => {
+  it('без сырых управляющих байт: US/ESC/BEL только октавами внутри printf', () => {
     expect(SETUP).not.toContain('\x1f');
     expect(SETUP).not.toContain('\x1b');
+    expect(SETUP).not.toContain('\x07');
+  });
+
+  it('формат маркера не печатает `\\`: BusyBox fancy prompt склеил бы его с началом PS1', () => {
+    // BusyBox ash с FEATURE_EDITING_FANCY_PROMPT разбирает \-последовательности в
+    // развёрнутом PS1: `ESC \` + `\$ ` превращалось в `ESC #` — маркер без конца.
+    // В формате printf `\\` — единственный способ напечатать `\`; октавы его не дают.
+    const fmt = /printf '([^']*)'/.exec(SETUP)![1]!;
+    expect(fmt).not.toContain('\\\\');
+    expect(fmt).not.toMatch(/\\134|\\x5c/i);
   });
 
   it('три ветки: zsh precmd, bash PROMPT_COMMAND, POSIX-fallback через PS1', () => {

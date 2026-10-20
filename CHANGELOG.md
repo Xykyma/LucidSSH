@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **The breadcrumb and prompt detection now work on Alpine and other BusyBox servers whose shell expands `\` sequences in the prompt.** There, after the first prompt the hidden marker swallowed the backslash-escape at the start of your own prompt (`\$` showed as `#`, `\w` as a literal `\w`), the marker never ended, its tail — including the session's shell-integration key — was printed on screen, and the breadcrumb, error detector and dangerous command guard stopped seeing the prompt. The marker now ends with a character no shell rewrites. Remaining limit on these servers: a directory name containing `\` sequences is shown in the breadcrumb as the shell expands it.
+
 ### Security
 
 - **Crafted server output or import files can no longer freeze the app.** Three places made the main process spin on untrusted input: the error detector trimmed trailing whitespace from up to 64 KB of output with a backtracking pattern (seconds on a long run of spaces); the `ssh_config` import parser took seconds on a long run of `=` and read files of any size; and importing hosts with the "rename" strategy ran one database query per candidate name, so a file of 10,000 identical hosts hung the app. The detector now slices first and trims by hand, the parser reads keyword and value with non-overlapping patterns, splits lines on a lone CR too, skips lines over 4,096 characters and rejects files over 1 MB, and both imports pick free names in memory inside one transaction. Valid `Key value`, `Key=value` and `Key = value` lines parse as before. A host import is now a single transaction: if saving any host fails, none of the batch is kept, instead of a partial import.
