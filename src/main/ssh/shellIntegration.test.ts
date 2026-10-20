@@ -15,7 +15,7 @@ const US = '\x1f';
 const NONCE = '0123456789abcdef0123456789abcdef';
 const SETUP = shellIntegrationSetup(NONCE);
 const mk = (u: string, h: string, p: string, e: string, c = '0', sudoUser = '', nonce = NONCE): string =>
-  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${p}${US}${e}${US}${c}${US}${sudoUser}\x1b\\`;
+  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${nonce}\x1b\\`;
 
 describe('BreadcrumbParser', () => {
   it('вырезает маркер и извлекает breadcrumb + exit code', () => {
@@ -76,6 +76,95 @@ describe('BreadcrumbParser', () => {
     const parser = new BreadcrumbParser(NONCE);
     const legacy = `\x1b_lucidssh${NONCE}${US}root${US}h${US}/${US}0${US}0\x1b\\`;
     expect(parser.push(legacy).marks).toHaveLength(0);
+  });
+
+  it('маркер формата тикета 14 (путь в середине, без завершающего nonce) не принимается', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const v14 = `\x1b_lucidssh${NONCE}${US}root${US}h${US}/${US}0${US}0${US}\x1b\\`;
+    expect(parser.push(v14).marks).toHaveLength(0);
+  });
+
+  it('US в имени каталога не сдвигает euid и exit code (тикет 17)', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    // каталог «a␟0␟1␟b»: в прежней раскладке сдвинул бы поля в euid=0 (root)
+    const { cleaned, marks } = parser.push(mk('u', 'h', `/srv/a${US}0${US}1${US}b`, '1000', '0'));
+    expect(cleaned).toBe('');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.crumb).toMatchObject({ username: 'u', host: 'h', path: '/srv/a01b', privilege: 'normal' });
+    expect(marks[0]?.exitCode).toBe(0);
+  });
+
+  it('ESC \\ в имени каталога не обрывает маркер: поля верные, nonce не попадает в вывод (тикет 17)', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const { cleaned, marks } = parser.push(`a${mk('u', 'h', `/srv/x\x1b\\${US}0${US}1y`, '1000', '0')}b`);
+    expect(cleaned).toBe('ab');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.crumb).toMatchObject({ path: '/srv/x\\01y', privilege: 'normal' });
+    expect(marks[0]?.exitCode).toBe(0);
+  });
+
+  it('то же, разрезанное между чанками прямо по ESC \\ из имени каталога', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const full = mk('u', 'h', '/srv/x\x1b\\y', '1000', '2');
+    const cut = full.indexOf('\x1b\\') + 2;
+    const r1 = parser.push(full.slice(0, cut));
+    expect(r1.marks).toHaveLength(0);
+    expect(r1.cleaned).toBe('');
+    const r2 = parser.push(full.slice(cut));
+    expect(r2.cleaned).toBe('');
+    expect(r2.marks[0]?.exitCode).toBe(2);
+  });
+
+  it('висящее начало подделки перед настоящим маркером не проглатывает его', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    // `cat` файла, оборванного на `ESC _lucidssh…`; путь настоящего маркера с ESC \
+    const { cleaned, marks } = parser.push(`out\x1b_lucidssh${US}x${mk('u', 'h', '/a\x1b\\b', '1000', '3')}$ `);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.exitCode).toBe(3);
+    expect(cleaned).toBe(`out${US}x$ `); // хвост подделки — обычный вывод
+  });
+
+  it('оборванный настоящий маркер не склеивается со следующим', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const cutShort = `\x1b_lucidssh${NONCE}${US}u${US}h${US}1000${US}130${US}`;
+    const r1 = parser.push(`${cutShort}^C\r\n`);
+    expect(r1.marks).toHaveLength(0);
+    const r2 = parser.push(`${mk('u', 'h', '/srv', '1000', '130')}$ `);
+    expect(r2.marks).toHaveLength(1);
+    expect(r2.marks[0]?.crumb.path).toBe('/srv');
+    expect(r1.cleaned + r2.cleaned).not.toContain(NONCE);
+  });
+
+  it('маркер с длинным путём (PATH_MAX), пришедший несколькими чанками, не вываливается на экран', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const full = mk('u', 'h', '/' + 'd'.repeat(4094), '1000', '0');
+    let cleaned = '';
+    let marks = 0;
+    for (let i = 0; i < full.length; i += 1000) {
+      const r = parser.push(full.slice(i, i + 1000));
+      cleaned += r.cleaned;
+      marks += r.marks.length;
+    }
+    expect(cleaned).toBe('');
+    expect(marks).toBe(1);
+  });
+
+  it('маркер без завершающего nonce (оборван) не принимается', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const cutShort = `\x1b_lucidssh${NONCE}${US}u${US}h${US}1000${US}0${US}${US}/x\x1b\\`;
+    // ждёт настоящего конца — до лимита хвоста, маркера нет
+    expect(parser.push(cutShort).marks).toHaveLength(0);
+    expect(parser.push('x'.repeat(5000)).marks).toHaveLength(0);
+  });
+
+  it('нечисловые euid / exit code и нехватка полей — маркер не принимается', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    expect(parser.push(mk('u', 'h', '/', '', '0')).marks).toHaveLength(0);
+    expect(parser.push(mk('u', 'h', '/', '0x0', '0')).marks).toHaveLength(0);
+    expect(parser.push(mk('u', 'h', '/', '1000', '-1')).marks).toHaveLength(0);
+    expect(parser.push(mk('u', 'h', '/', '1000', '1 ')).marks).toHaveLength(0);
+    const short = `\x1b_lucidssh${NONCE}${US}u${US}1000${US}0${US}${US}/${US}${NONCE}\x1b\\`;
+    expect(parser.push(short).marks).toHaveLength(0);
   });
 
   it('собирает маркер, разрезанный между двумя чанками', () => {
@@ -210,7 +299,28 @@ describe('shellIntegrationSetup', () => {
       expect(line.startsWith(' ')).toBe(true);
     }
     // финальный вызов-сигнал «настройка выполнена» — в самом конце
-    expect(lines[lines.length - 1]!.endsWith('__lucidssh_mark')).toBe(true);
+    expect(lines[lines.length - 1]!.endsWith('__lucidssh_mark;; esac')).toBe(true);
+  });
+
+  it('без встроенного printf ничего не включается: каждая строка целиком под проверкой builtin (тикет 17)', () => {
+    // LC_ALL=C: bash переводит «is a shell builtin» — на ru_RU иначе не совпало бы
+    const guard = ' case $(LC_ALL=C;command -V printf 2>&1) in *builtin) ';
+    const lines = SETUP.slice(0, -1).split('\n');
+    for (const line of lines) {
+      // проверка — первое, что делает строка; всё остальное — в её ветке *builtin)
+      expect(line.startsWith(guard)).toBe(true);
+      expect(line.endsWith(';; esac')).toBe(true);
+    }
+    // проверка идёт раньше определения функции и любого хука
+    expect(SETUP.indexOf('command -V printf')).toBeLessThan(SETUP.indexOf('__lucidssh_mark()'));
+  });
+
+  it('nonce — только в формате встроенного printf (в начале и в конце маркера), не в argv', () => {
+    const fmt = `printf '\\033_lucidssh${NONCE}\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037${NONCE}\\033\\\\' `;
+    expect(SETUP).toContain(fmt);
+    expect(SETUP.split(NONCE)).toHaveLength(3); // ровно два вхождения — оба в fmt
+    // $PWD — последний аргумент
+    expect(SETUP).toContain('"${SUDO_USER:-}" "$PWD"; }');
   });
 
   it('без сырых управляющих байт: US/ESC только октавами внутри printf', () => {

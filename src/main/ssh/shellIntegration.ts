@@ -26,7 +26,7 @@ const APC_START = '\x1b_lucidssh';
 const APC_END = '\x1b\\';
 
 /**
- * Команда настройки интеграции. ДВЕ строки (определение функции + диспетчер);
+ * Команда настройки интеграции. ТРИ строки (определение функции, диспетчер, вызов-сигнал);
  * отправляются одной pty-записью, shell читает их последовательно. `printf` с
  * фиксированным форматом — статическая строка. Префикс-пробел в начале каждой
  * строки не даёт командам попасть в историю при HISTCONTROL=ignorespace.
@@ -59,20 +59,39 @@ const APC_END = '\x1b\\';
  * (т.е. только в zsh, где ZSH_VERSION непуст).
  *
  * `nonce` — hex (см. ShellIntegrationSession), поэтому безопасен литералом в
- * формате printf: ни `%`, ни `\`, ни кавычек. Первая строка с ним ~256 байт.
+ * формате printf: ни `%`, ни `\`, ни кавычек. Первая строка с ним ~350 байт.
+ *
+ * Все строки обёрнуты в проверку «printf — встроенная команда» (тикет 17, F3):
+ * внешний /usr/bin/printf (mksh, OpenBSD ksh, BusyBox без ASH_PRINTF) получил
+ * бы nonce в argv, а его видят в `ps` другие пользователи сервера. Без builtin
+ * не определяется функция, не ставится хук и не вызывается финальный маркер —
+ * сессия ведёт себя как с shell, который маркер не присылает. Проверка в
+ * каждой строке своя: строки — независимые команды (см. выше про BusyBox).
  */
+// `command -V` — POSIX. bash/zsh/dash/ash/ksh93: «printf is a shell builtin»;
+// внешний printf — путь, оканчивающийся на /printf; функция/алиас — не builtin.
+// bash переводит этот текст (gettext): на сервере с ru_RU без LC_ALL=C проверка
+// молча выключила бы интеграцию. LC_ALL=C — присваиванием внутри подстановки:
+// действует только в подоболочке, а gettext при локали C игнорирует LANGUAGE.
+// Слово `case` не расщепляется — кавычки не нужны; stderr в ту же подстановку:
+// сообщение об ошибке на «builtin» не кончается (байты экономятся под лимит).
+const IF_PRINTF_BUILTIN = 'case $(LC_ALL=C;command -V printf 2>&1) in *builtin) ';
+
 export const shellIntegrationSetup = (nonce: string): string =>
   // __lc=$? — код возврата последней команды снимается ПЕРВЫМ, до любых операций (ERR-01).
   // Разделитель US — октавой \037 ВНУТРИ формата printf (как \033 для ESC), НЕ сырым
   // байтом в команде: сырой 0x1f — это Ctrl+_, в интерактивном bash readline
   // выполняет его как undo и корёжит команду (на реальных серверах маркер
   // склеивался без разделителей и breadcrumb не работал; мок без readline это скрывал).
-  // 6-е поле — SUDO_USER удалённого шелла: отличает root-через-sudo (амбер
+  // 5-е поле — SUDO_USER удалённого шелла: отличает root-через-sudo (амбер
   // «sudo», BRD-03) от настоящего root-логина (красный). sudo проставляет её
   // сам даже при env_reset; `su -` окружение чистит — там поле пустое → root.
-  ` __lucidssh_mark() { __lc=$?; printf '\\033_lucidssh${nonce}\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\033\\\\' ` +
-  `"\${USER:-$(id -un 2>/dev/null)}" "\${HOSTNAME:-$(hostname 2>/dev/null)}" "$PWD" "$(id -u 2>/dev/null)" "$__lc" "\${SUDO_USER:-}"; }\n` +
-  ` if [ -n "$ZSH_VERSION" ]; then autoload -Uz add-zsh-hook 2>/dev/null; add-zsh-hook precmd __lucidssh_mark 2>/dev/null || eval 'precmd_functions+=(__lucidssh_mark)'; ` +
+  // $PWD — ПОСЛЕДНИМ, и за ним nonce ещё раз (тикет 17, F2): имя каталога задаёт
+  // сервер. US в нём не сдвинет euid/exit (они левее), а ESC \ в нём не оборвёт
+  // маркер: BreadcrumbParser ищет конец по «US nonce ESC \».
+  ` ${IF_PRINTF_BUILTIN}__lucidssh_mark() { __lc=$?; printf '\\033_lucidssh${nonce}\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037${nonce}\\033\\\\' ` +
+  `"\${USER:-$(id -un 2>/dev/null)}" "\${HOSTNAME:-$(hostname 2>/dev/null)}" "$(id -u 2>/dev/null)" "$__lc" "\${SUDO_USER:-}" "$PWD"; };; esac\n` +
+  ` ${IF_PRINTF_BUILTIN}if [ -n "$ZSH_VERSION" ]; then autoload -Uz add-zsh-hook 2>/dev/null; add-zsh-hook precmd __lucidssh_mark 2>/dev/null || eval 'precmd_functions+=(__lucidssh_mark)'; ` +
   // bash: маркер через PROMPT_COMMAND, НЕ через встраивание в PS1. Маркер в PS1
   // становится частью СТРОКИ приглашения: readline перепечатывает её при
   // SIGWINCH/Ctrl+L/completion — повторный маркер со старым $? (источник бага
@@ -84,11 +103,10 @@ export const shellIntegrationSetup = (nonce: string): string =>
   // встраивание в PS1 ($(...) переразворачивается перед каждым приглашением;
   // найдено на реальном Keenetic/ash-сервере 09.07.2026). Повторные маркеры от
   // перерисовок приглашения отсекает CommandGate на стороне main.
-  `else case "$PS1" in *__lucidssh_mark*) ;; *) PS1='$(__lucidssh_mark)'"$PS1";; esac; fi; ` +
-  `__lucidssh_mark\n`;
+  `else case "$PS1" in *__lucidssh_mark*) ;; *) PS1='$(__lucidssh_mark)'"$PS1";; esac; fi;; esac\n` +
+  // Финальный вызов-сигнал — отдельной строкой: со своей проверкой вторая не влезла бы в лимит.
+  ` ${IF_PRINTF_BUILTIN}__lucidssh_mark;; esac\n`;
 
-// eslint-disable-next-line no-control-regex
-const MARKER_RE = /\x1b_lucidssh([\s\S]*?)\x1b\\/;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_RE = /[\x00-\x1f\x7f-\x9f]/g;
 
@@ -118,8 +136,15 @@ export interface ParseResult {
 export class BreadcrumbParser {
   private pending = '';
 
+  /** Начало и конец маркера, который печатает настройка ЭТОЙ сессии. */
+  private readonly sessionMarkerStart: string;
+  private readonly sessionMarkerEnd: string;
+
   /** nonce — тот же, что вшит в shellIntegrationSetup этой сессии. */
-  constructor(private readonly nonce: string) {}
+  constructor(private readonly nonce: string) {
+    this.sessionMarkerStart = APC_START + nonce + US;
+    this.sessionMarkerEnd = US + nonce + APC_END;
+  }
 
   push(chunk: string): ParseResult {
     let buf = this.pending + chunk;
@@ -131,13 +156,30 @@ export class BreadcrumbParser {
     for (;;) {
       const startIdx = buf.indexOf(APC_START);
       if (startIdx === -1) break;
-      const endIdx = buf.indexOf(APC_END, startIdx);
+      // Маркер нашего shell кончается только на «US nonce ESC \» (тикет 17):
+      // ESC \ в имени каталога не обрывает его раньше — иначе в таком каталоге
+      // хвост с nonce вываливался бы на экран, а приглашение не распознавалось
+      // (и Страж бы молчал). Без nonce в начале — до первого ESC \, как раньше.
+      const terminator = buf.startsWith(this.sessionMarkerStart, startIdx) ? this.sessionMarkerEnd : APC_END;
+      const endIdx = buf.indexOf(terminator, startIdx);
+      // Начало настоящего маркера раньше конца текущего: текущий — висящее
+      // начало без конца (подделка из `cat` или наш маркер, оборванный Ctrl+C).
+      // Иначе он проглотил бы настоящий маркер вместе с приглашением. Вырезается
+      // только начальная последовательность (у нашего обрубка — вместе с nonce):
+      // что за ней — показывается как обычный вывод, а не пропадает.
+      const nested = buf.indexOf(this.sessionMarkerStart, startIdx + 1);
+      if (nested !== -1 && (endIdx === -1 || nested < endIdx)) {
+        const startLen = terminator === APC_END ? APC_START.length : this.sessionMarkerStart.length;
+        buf = buf.slice(0, startIdx) + buf.slice(startIdx + startLen);
+        continue;
+      }
       if (endIdx === -1) {
         // маркер не завершён — выводим всё до него, хвост оставляем на потом
         cur += buf.slice(0, startIdx);
         this.pending = buf.slice(startIdx);
-        // защита от бесконечного накопления мусора без завершителя
-        if (this.pending.length > 4096) {
+        // защита от бесконечного накопления мусора без завершителя; с запасом
+        // на маркер с $PWD до PATH_MAX (4096), пришедший несколькими чанками
+        if (this.pending.length > 8192) {
           cur += this.pending;
           this.pending = '';
         }
@@ -145,14 +187,15 @@ export class BreadcrumbParser {
         return { cleaned: pieces.join(''), pieces, marks };
       }
       cur += buf.slice(0, startIdx);
-      const marker = buf.slice(startIdx, endIdx + APC_END.length);
-      const mark = parseMarker(marker, this.nonce);
+      const markerEnd = endIdx + terminator.length;
+      // тело — без `ESC _lucidssh` и `ESC \`; «US nonce» в конце остаётся для parseMarker
+      const mark = parseMarker(buf.slice(startIdx + APC_START.length, markerEnd - APC_END.length), this.nonce);
       if (mark) {
         marks.push(mark);
         pieces.push(cur);
         cur = '';
       }
-      buf = buf.slice(endIdx + APC_END.length);
+      buf = buf.slice(markerEnd);
     }
 
     // Возможен незавершённый APC_START, разрезанный по последним байтам —
@@ -269,21 +312,22 @@ export class CommandGate {
   }
 }
 
-function parseMarker(marker: string, nonce: string): ShellMark | null {
-  const m = marker.match(MARKER_RE);
-  if (!m || !m[1]) return null;
-  // Формат: nonce US u US h US p US euid US exit US sudoUser.
-  // Старого 5-полевого формата (без sudoUser) больше нет: каждый маркер
-  // печатает настройка этой же сессии, а маркер старой версии nonce не несёт.
-  const [markNonce, ...fields] = m[1].split(US);
-  if (!nonce || markNonce !== nonce || fields.length < 6) return null;
-  const [username, host, path, euidStr, exitStr, sudoUser] = fields;
-  const euid = Number(euidStr);
-  const exitNum = Number(exitStr);
-  // sudo = root с сохранённым SUDO_USER удалённого шелла (6-е поле маркера);
+/** body — содержимое маркера между `ESC _lucidssh` и завершающим `ESC \`. */
+function parseMarker(body: string, nonce: string): ShellMark | null {
+  // Формат: nonce US u US h US euid US exit US sudoUser US pwd US nonce.
+  // Путь задаёт сервер (имя каталога) — он последний: US в нём уходит в путь,
+  // не сдвигая числовые поля; завершающий nonce подтверждает, что маркер
+  // дочитан до конца, а не оборван ESC \ из того же имени (тикет 17). Каждый
+  // маркер печатает настройка этой же сессии, поэтому старых форматов нет.
+  const parts = body.split(US);
+  if (!nonce || parts.length < 8 || parts[0] !== nonce || parts[parts.length - 1] !== nonce) return null;
+  const [, username, host, euidStr = '', exitStr = '', sudoUser] = parts;
+  if (!/^\d{1,10}$/.test(euidStr) || !/^\d{1,10}$/.test(exitStr)) return null;
+  const path = parts.slice(6, -1).join(US);
+  // sudo = root с сохранённым SUDO_USER удалённого шелла (5-е поле маркера);
   // root без него — настоящий root-логин или `su -` (окружение вычищено).
   const privilege: Breadcrumb['privilege'] =
-    euid === 0 ? (sudoUser ? 'sudo' : 'root') : 'normal';
+    Number(euidStr) === 0 ? (sudoUser ? 'sudo' : 'root') : 'normal';
   // Даже настоящий маркер несёт текст сервера: каталог может называться как
   // угодно. Управляющие символы (C0, DEL, C1) из полей вырезаются: путь
   // попадает в `cd` по клику и в отображение breadcrumb.
@@ -292,9 +336,9 @@ function parseMarker(marker: string, nonce: string): ShellMark | null {
     username: clean(username).slice(0, 64),
     host: clean(host).slice(0, 128),
     path: clean(path).slice(0, 4096),
-    privilege: Number.isFinite(euid) ? privilege : 'normal'
+    privilege
   };
-  return { crumb, exitCode: Number.isInteger(exitNum) ? exitNum : null };
+  return { crumb, exitCode: Number(exitStr) };
 }
 
 // ---------------------------------------------------------------------------

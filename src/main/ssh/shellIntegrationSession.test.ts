@@ -8,7 +8,7 @@ const US = '\x1f';
 const NONCE = '0123456789abcdef0123456789abcdef';
 const SETUP = shellIntegrationSetup(NONCE);
 const mk = (u: string, h: string, p: string, e: string, c = '0', sudoUser = '', nonce = NONCE): string =>
-  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${p}${US}${e}${US}${c}${US}${sudoUser}\x1b\\`;
+  `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${nonce}\x1b\\`;
 /** Тот же маркер, что напечатал бы `printf` из тикета 14: без nonce. */
 const forged = (p: string, e = '0', c = '0'): string =>
   `\x1b_lucidssh${US}x${US}y${US}${p}${US}${e}${US}${c}${US}\x1b\\`;
@@ -493,6 +493,36 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     // настоящий маркер потом получает весь вывод команды, с кодом выхода из него
     const done = box.feed(mk('u', 'h', '/home/u', '1000', '0'));
     expect(done.events[1]).toMatchObject({ kind: 'command-finished', exitCode: 0, output: 'line\r\nmore\r\n' });
+  });
+
+  it('ESC \\ и US в имени каталога: маркер принят целиком, euid/exit не подменены (тикет 17)', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.writeCommand('cd evil');
+    const result = box.feed(`${mk('u', 'h', `/tmp/x\x1b\\y${US}0${US}1`, '1000', '0')}$ `);
+    expect(result.display).toBe('$ ');
+    expect(result.events).toEqual([
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/tmp/x\\y01', privilege: 'normal' }) },
+      expect.objectContaining({ kind: 'command-finished', command: 'cd evil', exitCode: 0 })
+    ]);
+    expect(box.isBusy()).toBe(false);
+  });
+
+  it('маркер с настоящим nonce, оборванный до завершающего nonce: состояние не «приглашение», busy остаётся', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.writeCommand('ls');
+    const cutShort = `\x1b_lucidssh${NONCE}${US}u${US}h${US}1000${US}0${US}${US}/x\x1b\\`;
+    expect(box.feed(`${cutShort}more\r\n`).events).toEqual([]);
+    expect(box.isBusy()).toBe(true);
+  });
+
+  it('маркер с настоящим nonce, но нечисловым exit code: состояние не «приглашение», busy остаётся', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.writeCommand('ls');
+    expect(box.feed(mk('u', 'h', '/', '1000', 'x')).events).toEqual([]);
+    expect(box.isBusy()).toBe(true);
   });
 
   it('подделка не завершает подавление эха настройки', () => {
