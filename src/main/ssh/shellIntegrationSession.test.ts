@@ -390,6 +390,66 @@ describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия 
     expect(box.feed('[sudo] password for u: ').events).toEqual([{ kind: 'password-prompt' }]);
   });
 
+  it('тикет 27: нераспознанный запрос секрета из REPL после догадки — сырой ввод, composer возвращает следующая догадка', () => {
+    const box = unconfirmed();
+    box.writeCommand('python3 -q');
+    box.feed('>>> ');
+    expect(eventKinds(box.tick('prompt-guess'))).toEqual(['prompt-guess']);
+    box.writeCommand('import getpass; getpass.getpass("Key: ")');
+    expect(box.feed('Key: ').events).toEqual([{ kind: 'password-prompt' }]);
+    // Ответ не пишется в lastCommand (история, HIST-07).
+    expect(box.writeCommand('s3cret').toWrite).toBe('s3cret\n');
+    expect(box.runningCommand()).toBe('python3 -q');
+    box.feed('\r\n>>> ');
+    expect(eventKinds(box.tick('prompt-guess'))).toEqual(['prompt-guess']);
+  });
+
+  it('тикет 27: ложная догадка на «100%», затем «Enter PEM pass phrase:» — сырой ввод', () => {
+    const box = unconfirmed();
+    box.writeCommand('pv big | tool');
+    box.feed('[=====] 100%');
+    expect(eventKinds(box.tick('prompt-guess'))).toContain('prompt-guess');
+    expect(box.feed('\r\nEnter PEM pass phrase: ').events).toEqual([{ kind: 'password-prompt' }]);
+    box.sendRawInput('\r');
+    box.feed('\r\n$ ');
+    expect(eventKinds(box.tick('prompt-guess'))).toContain('prompt-guess');
+    box.writeCommand('ls');
+    expect(box.runningCommand()).toBe('ls');
+  });
+
+  it('тикет 27: повтор после неверного ключа остаётся сырым до приглашения шелла', () => {
+    const box = unconfirmed();
+    box.writeCommand('tool --login');
+    box.feed('Token: ');
+    box.sendRawInput('\r');
+    expect(box.feed('\r\nInvalid, retry\r\nToken: ').events).toEqual([]); // фронт уже был, режим держится
+    expect(box.writeCommand('second').toWrite).toBe('second\n');
+    expect(box.runningCommand()).toBe('tool --login');
+  });
+
+  it('тикет 27: ответ на «Continue? [y/N]:» уходит сырым, не командой (принятый побочный эффект)', () => {
+    const box = unconfirmed();
+    box.writeCommand('apt upgrade');
+    expect(box.feed('Continue? [y/N]: ').events).toEqual([{ kind: 'password-prompt' }]);
+    box.writeCommand('y');
+    expect(box.runningCommand()).toBe('apt upgrade');
+  });
+
+  it('тикет 27: read -s после широкого правила по-прежнему не угадывается по старому приглашению', () => {
+    const box = unconfirmed();
+    box.writeCommand('ls');
+    box.feed('Key:\r\nx\r\n$ ');
+    box.tick('prompt-guess');
+    box.writeCommand('read -s secret');
+    expect(box.tick('prompt-guess').events).toEqual([]);
+  });
+
+  it('тикет 27: в сессии с рабочей интеграцией произвольное «Key:» не даёт события', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    expect(box.feed('Key: ').events).toEqual([]);
+  });
+
   it('тишина без новой строки ввода или без формы приглашения — догадки нет', () => {
     const box = unconfirmed();
     box.writeCommand('sleep 5; echo done');
