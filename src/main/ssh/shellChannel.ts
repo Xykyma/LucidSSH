@@ -201,7 +201,7 @@ export class ShellChannel {
         // приходит вовсе, так что сброс здесь корректно ловит именно выход из
         // программы (ADR-0005), а не путает её с обычным промптом.
         this.interactiveProgramActive = false;
-        emit(IPC.evBreadcrumb, this.sessionId, event.crumb, event.atPrompt);
+        emit(IPC.evBreadcrumb, this.sessionId, event.crumb, event.atPrompt, event.synthetic);
         break;
       case 'command-finished':
         this.deps.onCommandFinished(event);

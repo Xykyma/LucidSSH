@@ -38,7 +38,7 @@ describe('ShellIntegrationSession.feed — MOTD и первый маркер', (
     const box = new ShellIntegrationSession(NONCE);
     const result = box.feed(mk('nikita', 'web-01', '/home/nikita', '1000', '0'));
     expect(result.events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ username: 'nikita' }), atPrompt: true }
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ username: 'nikita' }), atPrompt: true, synthetic: false }
     ]);
   });
 });
@@ -477,7 +477,7 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     const result = box.feed(`a${forged('/fake', '0', '1')}b${mk('u', 'h', '/srv', '1000', '0')}$ `);
     expect(result.display).toBe('ab$ ');
     expect(result.events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/srv', privilege: 'normal' }), atPrompt: true },
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/srv', privilege: 'normal' }), atPrompt: true, synthetic: false },
       expect.objectContaining({ kind: 'command-finished', command: 'ls', exitCode: 0, output: 'ab' })
     ]);
   });
@@ -502,7 +502,7 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     const result = box.feed(`${mk('u', 'h', `/tmp/x\x1b\\y${US}0${US}1`, '1000', '0')}$ `);
     expect(result.display).toBe('$ ');
     expect(result.events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/tmp/x\\y01', privilege: 'normal' }), atPrompt: true },
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/tmp/x\\y01', privilege: 'normal' }), atPrompt: true, synthetic: false },
       expect.objectContaining({ kind: 'command-finished', command: 'cd evil', exitCode: 0 })
     ]);
     expect(box.isBusy()).toBe(false);
@@ -557,7 +557,7 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     const markerA = mk('u', 'h', '/a', '1000', '0', '', nonceA);
     expect(b.feed(markerA).events).toEqual([]);
     expect(a.feed(markerA).events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/a' }), atPrompt: true }
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/a' }), atPrompt: true, synthetic: false }
     ]);
   });
 
@@ -574,7 +574,8 @@ describe('ShellIntegrationSession — подделанный маркер (ти�
     expect(result.events[0]).toEqual({
       kind: 'breadcrumb',
       crumb: expect.objectContaining({ path: '/root', privilege: 'root' }),
-      atPrompt: true
+      atPrompt: true,
+      synthetic: false
     });
   });
 });
@@ -618,7 +619,7 @@ describe('ShellIntegrationSession — многострочная сырая вс
 
     const tick = box.tick('paste-echo');
     expect(tick.events).toEqual([
-      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/home/u' }), atPrompt: true }
+      { kind: 'breadcrumb', crumb: expect.objectContaining({ path: '/home/u' }), atPrompt: true, synthetic: true }
     ]);
     box.writeCommand('ls');
     expect(box.runningCommand()).toBe('ls');
