@@ -336,6 +336,125 @@ describe('ShellIntegrationSession — integration-unconfirmed (страховк�
   });
 });
 
+describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия без маркеров)', () => {
+  const GUESS = expect.objectContaining({ timer: 'prompt-guess', action: 'schedule' });
+
+  /** Интеграция не подтвердилась: настройка ушла, echo-flush без маркера. */
+  function unconfirmed(): ShellIntegrationSession {
+    const box = new ShellIntegrationSession(NONCE);
+    box.feed('Welcome\r\n$ ');
+    box.tick('setup-silence');
+    box.feed('эхо настройки без маркера\r\n$ ');
+    box.tick('echo-flush');
+    box.tick('prompt-guess');
+    return box;
+  }
+
+  it('после команды и приглашения шелла в тишине — prompt-guess (Страж снова на наборе)', () => {
+    const box = unconfirmed();
+    expect(box.writeCommand('ls').timerActions).toContainEqual(GUESS);
+    expect(box.feed('a b c\r\n$ ').timerActions).toContainEqual(GUESS);
+    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+  });
+
+  it('пароль sudo: на запросе молчит, после ответа и приглашения — prompt-guess; следующая команда не сырая', () => {
+    const box = unconfirmed();
+    box.writeCommand('sudo -k; sudo true');
+    expect(box.feed('[sudo] password for u: ').events).toEqual([{ kind: 'password-prompt' }]);
+    expect(box.tick('prompt-guess').events).toEqual([]);
+
+    expect(box.sendRawInput('\r').timerActions).toContainEqual(GUESS);
+    box.feed('\r\n$ ');
+    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+
+    box.writeCommand('rm -rf /tmp/x');
+    expect(box.runningCommand()).toBe('rm -rf /tmp/x');
+  });
+
+  it('повтор после неверного пароля: режим пароля держится до приглашения шелла', () => {
+    const box = unconfirmed();
+    box.writeCommand('sudo true');
+    box.feed('[sudo] password for u: ');
+    box.sendRawInput('\r');
+    box.feed('\r\nSorry, try again.\r\n[sudo] password for u: ');
+    expect(box.tick('prompt-guess').events).toEqual([]);
+    box.sendRawInput('\r');
+    box.feed('\r\n\x1b[32m$\x1b[0m ');
+    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+
+    // После возврата новый запрос пароля снова распознаётся (нарастающий фронт).
+    box.writeCommand('sudo -k; sudo true');
+    expect(box.feed('[sudo] password for u: ').events).toEqual([{ kind: 'password-prompt' }]);
+  });
+
+  it('тишина без новой строки ввода или без формы приглашения — догадки нет', () => {
+    const box = unconfirmed();
+    box.writeCommand('sleep 5; echo done');
+    box.feed('progress 50');
+    expect(box.tick('prompt-guess').events).toEqual([]);
+    box.feed('\r\n$ ');
+    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+    expect(box.tick('prompt-guess').events).toEqual([]);
+  });
+
+  it('тихая команда (read -s) — старое приглашение до Enter не считается новым', () => {
+    const box = unconfirmed();
+    box.writeCommand('ls');
+    box.feed('a\r\n$ ');
+    box.writeCommand('read -s secret');
+    expect(box.tick('prompt-guess').events).toEqual([]);
+  });
+
+  it('набор без Enter снимает догадку — строку не разрезает пополам', () => {
+    const box = unconfirmed();
+    box.writeCommand('ls');
+    box.feed('a\r\n$ ');
+    expect(box.sendRawInput('e').timerActions).toContainEqual({ timer: 'prompt-guess', action: 'cancel' });
+    box.feed('echo x >');
+    expect(box.tick('prompt-guess').events).toEqual([]);
+  });
+
+  it('Ctrl+C во время команды — догадка по приглашению после прерывания', () => {
+    const box = unconfirmed();
+    box.writeCommand('sleep 100');
+    box.sendRawInput('\x03');
+    box.feed('^C\r\n$ ');
+    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+  });
+
+  it('сессия с рабочей интеграцией: догадка не заводится, из режима пароля выводит только маркер', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.tick('echo-flush');
+    expect(box.writeCommand('sudo true').timerActions).not.toContainEqual(GUESS);
+    box.feed('[sudo] password for u: ');
+    box.sendRawInput('\r');
+    box.feed('\r\n$ ');
+    expect(box.tick('prompt-guess').events).toEqual([]);
+  });
+
+  it('реинжект после sudo -i не подтвердился — догадка выводит из режима пароля', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.writeCommand('sudo -i');
+    expect(box.feed('[sudo] password for u: ').events).toEqual([{ kind: 'password-prompt' }]);
+    box.sendRawInput('\r');
+    box.feed('\r\nroot@h:~# ');
+    box.tick('reinject');
+    box.feed('эхо настройки без маркера\r\nroot@h:~# ');
+    const flush = box.tick('echo-flush');
+    expect(flush.events).toContainEqual({ kind: 'integration-unconfirmed' });
+    expect(flush.timerActions).toContainEqual(GUESS);
+    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+  });
+
+  it('маркер после неподтверждения возвращает обычный режим', () => {
+    const box = unconfirmed();
+    box.feed(mk('u', 'h', '/home/u', '1000', '0'));
+    expect(box.writeCommand('ls').timerActions).not.toContainEqual(GUESS);
+  });
+});
+
 describe('ShellIntegrationSession.writeCommand — эхо отправленной команды не дублируется', () => {
   it('эхо команды вырезается из следующего чанка вывода', () => {
     const box = new ShellIntegrationSession(NONCE);

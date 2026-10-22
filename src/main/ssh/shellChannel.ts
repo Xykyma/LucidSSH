@@ -215,6 +215,9 @@ export class ShellChannel {
       case 'integration-unconfirmed':
         emit(IPC.evIntegrationUnconfirmed, this.sessionId);
         break;
+      case 'prompt-guess':
+        emit(IPC.evPromptGuess, this.sessionId);
+        break;
       case 'interactive-program':
         this.interactiveProgramActive = true;
         // Досылаем ранее пропущенный (только-rows) resize (ADR-0005): если

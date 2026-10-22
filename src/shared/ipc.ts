@@ -149,6 +149,7 @@ export const IPC = {
   evHistoryRecorded: 'ev:history-recorded', // HistoryDrawer перечитывает список, если открыт
   evPasswordPrompt: 'ev:password-prompt', // TERM-09 — подсказка «ввод пароля скрыт»
   evIntegrationUnconfirmed: 'ev:integration-unconfirmed', // shell-интеграция не подтвердилась за echo-flush
+  evPromptGuess: 'ev:prompt-guess', // без маркеров: вывод затих на приглашении шелла (тикет 25)
   evInteractiveProgram: 'ev:interactive-program' // BRD-05 — запущена известная интерактивная программа
 } as const;
 
@@ -188,6 +189,7 @@ export type RendererEvents = {
   [IPC.evHistoryRecorded]: [];
   [IPC.evPasswordPrompt]: [sessionId: string];
   [IPC.evIntegrationUnconfirmed]: [sessionId: string];
+  [IPC.evPromptGuess]: [sessionId: string];
   [IPC.evInteractiveProgram]: [sessionId: string, program: InteractiveProgramName];
 };
 
