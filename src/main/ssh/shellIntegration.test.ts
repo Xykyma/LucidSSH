@@ -18,6 +18,17 @@ const mk = (u: string, h: string, p: string, e: string, c = '0', sudoUser = '', 
   `\x1b_lucidssh${nonce}${US}${u}${US}${h}${US}${e}${US}${c}${US}${sudoUser}${US}${p}${US}${nonce}\x07`;
 
 describe('BreadcrumbParser', () => {
+  it('чанк из тысяч чужих маркеров разбирается за линейное время', () => {
+    const parser = new BreadcrumbParser(NONCE);
+    const foreign = '\x1b_lucidssh0000x\x07\x1b_lucidssh1111y\x1b\\';
+    const n = 20000;
+    const t0 = performance.now();
+    const { cleaned, marks } = parser.push(`a${foreign.repeat(n)}b`);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(cleaned).toBe('ab');
+    expect(marks).toHaveLength(0);
+  });
+
   it('вырезает маркер и извлекает breadcrumb + exit code', () => {
     const parser = new BreadcrumbParser(NONCE);
     const { cleaned, marks } = parser.push(`before${mk('root', 'web-01', '/var/www', '0', '0')}after`);

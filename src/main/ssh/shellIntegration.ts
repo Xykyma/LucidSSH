@@ -32,6 +32,9 @@ const APC_END = '\x1b\\';
 // nonce на экране, приглашение искажено. BEL ни один shell в PS1 не трогает.
 // Чужие маркеры (без nonce) ищутся до первого ESC \ или BEL и просто вырезаются.
 const SESSION_END = '\x07';
+// Конец чужого маркера — первый из ESC \ или BEL; один проход вместо двух indexOf.
+// eslint-disable-next-line no-control-regex
+const FOREIGN_END_RE = /\x1b\\|\x07/g;
 
 /**
  * Команда настройки интеграции. ТРИ строки (определение функции, диспетчер, вызов-сигнал);
@@ -155,14 +158,20 @@ export class BreadcrumbParser {
   }
 
   push(chunk: string): ParseResult {
-    let buf = this.pending + chunk;
+    const buf = this.pending + chunk;
     this.pending = '';
     const marks: ShellMark[] = [];
     const pieces: string[] = [];
     let cur = '';
+    // buf не мутирует: pos — начало необработанного хвоста. Каждый поиск идёт
+    // строго вперёд от pos, а ближайший старт маркера сессии кэшируется
+    // (nested) — вывод с тысячами ложных стартов стоит O(n), а не O(k·n).
+    let pos = 0;
+    let nested = -1;
+    let nestedFrom = -1; // с какой позиции посчитан nested; -1 — ещё не искали
 
     for (;;) {
-      const startIdx = buf.indexOf(APC_START);
+      const startIdx = buf.indexOf(APC_START, pos);
       if (startIdx === -1) break;
       // Маркер нашего shell кончается только на «US nonce BEL» (тикет 17):
       // ESC \ или BEL в имени каталога не обрывают его раньше — иначе в таком каталоге
@@ -170,26 +179,36 @@ export class BreadcrumbParser {
       // (и Страж бы молчал). Без nonce в начале — до первого ESC \ или BEL
       // (BEL — конец маркера другой сессии, например из `cat` записи терминала).
       const isSession = buf.startsWith(this.sessionMarkerStart, startIdx);
-      const esc = buf.indexOf(APC_END, startIdx);
-      const bel = buf.indexOf(SESSION_END, startIdx);
-      const terminator = isSession
-        ? this.sessionMarkerEnd
-        : bel !== -1 && (esc === -1 || bel < esc) ? SESSION_END : APC_END;
-      const endIdx = buf.indexOf(terminator, startIdx);
+      let terminator = this.sessionMarkerEnd;
+      let endIdx: number;
+      if (isSession) {
+        endIdx = buf.indexOf(terminator, startIdx);
+      } else {
+        // один проход вперёд до первого из ESC \ или BEL
+        FOREIGN_END_RE.lastIndex = startIdx;
+        const m = FOREIGN_END_RE.exec(buf);
+        endIdx = m ? m.index : -1;
+        terminator = m ? m[0] : APC_END;
+      }
       // Начало настоящего маркера раньше конца текущего: текущий — висящее
       // начало без конца (подделка из `cat` или наш маркер, оборванный Ctrl+C).
       // Иначе он проглотил бы настоящий маркер вместе с приглашением. Вырезается
       // только начальная последовательность (у нашего обрубка — вместе с nonce):
       // что за ней — показывается как обычный вывод, а не пропадает.
-      const nested = buf.indexOf(this.sessionMarkerStart, startIdx + 1);
+      // nested == -1 после поиска означает «до конца буфера нет» — повторно не ищем.
+      if (nestedFrom === -1 || (nested !== -1 && nested <= startIdx)) {
+        nested = buf.indexOf(this.sessionMarkerStart, startIdx + 1);
+        nestedFrom = startIdx + 1;
+      }
       if (nested !== -1 && (endIdx === -1 || nested < endIdx)) {
         const startLen = isSession ? this.sessionMarkerStart.length : APC_START.length;
-        buf = buf.slice(0, startIdx) + buf.slice(startIdx + startLen);
+        cur += buf.slice(pos, startIdx);
+        pos = startIdx + startLen;
         continue;
       }
       if (endIdx === -1) {
         // маркер не завершён — выводим всё до него, хвост оставляем на потом
-        cur += buf.slice(0, startIdx);
+        cur += buf.slice(pos, startIdx);
         this.pending = buf.slice(startIdx);
         // защита от бесконечного накопления мусора без завершителя; с запасом
         // на маркер с $PWD до PATH_MAX (4096), пришедший несколькими чанками
@@ -200,7 +219,7 @@ export class BreadcrumbParser {
         pieces.push(cur);
         return { cleaned: pieces.join(''), pieces, marks };
       }
-      cur += buf.slice(0, startIdx);
+      cur += buf.slice(pos, startIdx);
       const markerEnd = endIdx + terminator.length;
       // тело — без `ESC _lucidssh` и BEL; «US nonce» в конце остаётся для parseMarker
       // (у чужого маркера срез неточен, но parseMarker его без nonce всё равно отвергнет)
@@ -210,17 +229,17 @@ export class BreadcrumbParser {
         pieces.push(cur);
         cur = '';
       }
-      buf = buf.slice(markerEnd);
+      pos = markerEnd;
     }
 
     // Возможен незавершённый APC_START, разрезанный по последним байтам —
     // придержим небольшой хвост, если он выглядит как начало ESC-последовательности.
     const tailEsc = buf.lastIndexOf('\x1b');
-    if (tailEsc !== -1 && buf.length - tailEsc < APC_START.length && APC_START.startsWith(buf.slice(tailEsc))) {
-      cur += buf.slice(0, tailEsc);
+    if (tailEsc >= pos && buf.length - tailEsc < APC_START.length && APC_START.startsWith(buf.slice(tailEsc))) {
+      cur += buf.slice(pos, tailEsc);
       this.pending = buf.slice(tailEsc);
     } else {
-      cur += buf;
+      cur += buf.slice(pos);
     }
     pieces.push(cur);
     return { cleaned: pieces.join(''), pieces, marks };
