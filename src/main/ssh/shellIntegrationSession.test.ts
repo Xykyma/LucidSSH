@@ -678,6 +678,24 @@ describe('ShellIntegrationSession — многострочная сырая вс
     expect(crumbs(box.tick('paste-echo'))).toEqual([true]);
   });
 
+  it('таймер эха не выводит из режима пароля: su в вставке, Password: активен', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.sendRawInput('cd x\nsu\nconfirm\n');
+    box.feed(`${prompt()}`);
+    const pw = box.feed('Password: ');
+    expect(pw.events).toContainEqual({ kind: 'password-prompt' });
+
+    // 500 мс тишины: пароль всё ещё ждёт — «на промпт» объявлять нельзя
+    expect(crumbs(box.tick('paste-echo'))).toEqual([]);
+    // ответ на запрос по-прежнему сырой, в историю не попадает
+    expect(box.writeCommand('hunter2').toWrite).toBe('hunter2\n');
+    expect(box.runningCommand()).toBeNull();
+
+    // настоящий маркер возвращает «на промпт»
+    expect(crumbs(box.feed(`\r\n${prompt()}`))).toEqual([true]);
+  });
+
   it('вставка внутри запущенной программы не считается', () => {
     const box = new ShellIntegrationSession(NONCE);
     warmUp(box);
