@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AccessRiskPrompt, DangerousCommandPrompt, SubmitResult } from '@shared/guard';
+import { EDIT_CONTROL_CHARS } from '@shared/guard';
 import { getHost } from '../hosts/repository';
 import { loadConfig } from '../config/store';
 import {
@@ -27,12 +28,42 @@ import { t } from '../i18n';
  *  порога — не проверяем вовсе, это неотличимо от посимвольного ввода. */
 const RAW_CHECK_THRESHOLD = 5;
 
-/** Управляющие символы C0 (кроме табуляции и переводов строки), DEL и C1.
- *  readline применит их как правку строки (Ctrl+U/W/H…): «x», BS, «rm» выполнится
- *  как `rm`, а паттерну нужен пробел перед `rm`. Заменяем пробелом, не удаляем:
- *  иначе «x», BS, «rm» стало бы `xrm` и снова прошло бы мимо. */
+/* EDIT_CONTROL_CHARS (@shared/guard) readline применит как правку строки
+ * (Ctrl+U/W/H…): «x», BS, «rm» выполнится как `rm`, а паттерну нужен пробел
+ * перед `rm`. Для анализа заменяем пробелом, не удаляем: иначе «x», BS, «rm»
+ * стало бы `xrm` и снова прошло бы мимо. */
+
+/** Байты, которые заставляют readline выполнить строку: Enter (`\r`, `\n`) и
+ *  Ctrl+O (operate-and-get-next). Ctrl+O при этом и правка: он вклеивает
+ *  следующую строку истории, и `ls`, Ctrl+O, Enter выполнит невиданную команду. */
 // eslint-disable-next-line no-control-regex
-const EDIT_CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
+const RUNS_LINE = /[\r\n\x0f]/;
+/** Без флага g: у глобального регекспа test() помнит lastIndex между вызовами. */
+const HAS_EDIT_CONTROL = new RegExp(EDIT_CONTROL_CHARS.source);
+
+/**
+ * Пробел из EDIT_CONTROL_CHARS моделирует только правку, которая стирает текст.
+ * Курсор, вырезание и вклейка (Ctrl+A, Ctrl+U … Ctrl+Y, стрелки, Home) собирают
+ * команду из кусков в любом порядке: ` -rf ~`, Ctrl+A, `rm ` выполнит `rm -rf ~`.
+ * Эмуляция readline всегда неполна (vi-mode, zsh, Ctrl+R, Alt+.), поэтому кусок,
+ * где есть и правящий байт, и байт выполнения, подтверждается в любом случае.
+ * Мышь, F-клавиши и Ctrl+стрелки в vim/htop байта выполнения не содержат.
+ */
+function runsEditedLine(data: string): boolean {
+  return RUNS_LINE.test(data) && HAS_EDIT_CONTROL.test(data);
+}
+
+/** Совпадение «правка строки» (тикет 23): цели нет, подтверждение словом.
+ *  Объект — первая строка с правящим байтом: вставка целиком уже видна выше. */
+function editedInput(data: string): DangerMatch {
+  return {
+    patternId: 'edited-input',
+    target: data.split(/[\r\n]/).find((line) => HAS_EDIT_CONTROL.test(line)) ?? data,
+    scope: 'other',
+    confirmationKind: 'word',
+    confirmationText: ''
+  };
+}
 
 interface Pending {
   sessionId: string;
@@ -71,7 +102,7 @@ export function submitCommand(sessionId: string, command: string): SubmitResult 
   if (!sessionExists(sessionId)) return { status: 'sent' }; // неизвестная сессия — IPC-слой уже отверг
 
   if (guardEnabledFor(sessionId)) {
-    const danger = dangerPrompt(sessionId, command, 'command');
+    const danger = dangerPrompt(sessionId, command, 'command', analyzeDangers(command));
     if (danger) return { status: 'blocked', prompt: danger };
     const risk = riskPrompt(sessionId, command, 'command');
     if (risk) return { status: 'access-risk', prompt: risk };
@@ -127,9 +158,8 @@ function dangerPrompt(
   sessionId: string,
   command: string,
   mode: 'command' | 'raw',
-  analyzed = command
+  dangers: DangerMatch[]
 ): DangerousCommandPrompt | null {
-  const dangers = analyzeDangers(analyzed);
   if (dangers.length === 0) return null;
   const chosen = drawTarget(dangers);
   const requestId = randomUUID();
@@ -186,7 +216,11 @@ export function submitRawInput(sessionId: string, data: string): SubmitResult {
   if (data.length >= RAW_CHECK_THRESHOLD && guardEnabledFor(sessionId)) {
     // Нормализуется только копия для анализа; на сервер уходят исходные байты.
     const analyzed = data.replace(EDIT_CONTROL_CHARS, ' ');
-    const danger = dangerPrompt(sessionId, data, 'raw', analyzed);
+    // Сначала — модалка с настоящей целью, если она видна; правка без
+    // распознанной цели подтверждается словом.
+    let dangers = analyzeDangers(analyzed);
+    if (dangers.length === 0 && runsEditedLine(data)) dangers = [editedInput(data)];
+    const danger = dangerPrompt(sessionId, data, 'raw', dangers);
     if (danger) return { status: 'blocked', prompt: danger };
     const risk = riskPrompt(sessionId, data, 'raw', analyzed);
     if (risk) return { status: 'access-risk', prompt: risk };

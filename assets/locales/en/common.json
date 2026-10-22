@@ -488,6 +488,7 @@
       "fork-bomb": "This is a fork bomb: it spawns processes exponentially and freezes the server.",
       "drop-database": "This command irreversibly drops the database or table “{{target}}”.",
       "kill-init": "Signaling process 1 (init/systemd) will crash the whole system.",
+      "edited-input": "This pasted text contains line-editing keys (shown as ␁, ␛ and similar). The shell applies them before running the line, so what runs may differ from what you see — even a command assembled from pieces, like rm -rf.",
       "generic": "This command is recognized as potentially destructive. Review it before running."
     },
     "accessRisk": {
