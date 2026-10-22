@@ -87,12 +87,22 @@ export function prepareOutput(
   // короткого значения (KEY=a → KEY=••••••••)
   // ponytail: пароль, уходящий за границу дальше MASK_LOOKAHEAD, не опознается
   const truncated = raw.length > OUTPUT_LIMIT;
-  const { masked, hasSecret } = maskSecrets(
-    truncated ? raw.slice(0, OUTPUT_LIMIT + MASK_LOOKAHEAD) : raw
-  );
+  if (!truncated) {
+    const { masked, hasSecret } = maskSecrets(raw);
+    return { output: masked, outputTruncated: false, outputHasSecret: hasSecret };
+  }
+  // Маски короче значений, поэтому резать masked по индексу 4000 нельзя: в хранимую
+  // часть сдвинулся бы сырой текст из-за сырого смещения 4000. Храним общий префикс
+  // маскированного окна и маскированной головы (сырое смещение ≤ 4000): они расходятся
+  // там, где начинается секрет, разрезанный границей.
+  const { masked, hasSecret } = maskSecrets(raw.slice(0, OUTPUT_LIMIT + MASK_LOOKAHEAD));
+  const head = maskSecrets(raw.slice(0, OUTPUT_LIMIT)).masked;
+  let n = 0;
+  while (n < head.length && head[n] === masked[n]) n++;
+  // маска может быть длиннее значения (KEY=a → KEY=••••••••) — лимит держим явно
   return {
-    output: masked.slice(0, OUTPUT_LIMIT),
-    outputTruncated: truncated,
+    output: head.slice(0, Math.min(n, OUTPUT_LIMIT)),
+    outputTruncated: true,
     outputHasSecret: hasSecret
   };
 }
