@@ -56,6 +56,20 @@ describe('prepareOutput', () => {
     expect(result.outputTruncated).toBe(true);
   });
 
+  it('длинный замаскированный секрет раньше не сдвигает хвост окна маскирования в вывод', () => {
+    // маска короче значения → без привязки к сырому смещению 4000 в вывод попал бы
+    // сырой текст за границей лимита, включая начало пароля, чей «@» вне окна
+    const url = 'postgres://app:hunter2secret@db';
+    const head = 'TOKEN=' + 'a'.repeat(800) + '\n';
+    // пароль начинается за 10 символов до конца окна (4000 + 512), «@» — за его концом
+    const pad = 'x'.repeat(4000 + 512 - head.length - 'postgres://app:'.length - 10);
+    const result = prepareOutput(head + pad + url + ' ' + 'y'.repeat(500), false);
+    expect(result.output).not.toMatch(/hunter|postgres:\/\/app:h/);
+    expect(result.output).not.toContain('a'.repeat(20));
+    expect(result.outputTruncated).toBe(true);
+    expect(result.output!.length).toBeLessThanOrEqual(4000);
+  });
+
   it('не усекает вывод ровно на границе лимита', () => {
     const exact = 'x'.repeat(4000);
     const result = prepareOutput(exact, false);
