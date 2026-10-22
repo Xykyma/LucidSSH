@@ -8,6 +8,7 @@ import {
   EchoGate,
   detectInteractiveProgram,
   endsWithInputPrompt,
+  endsWithOwnShellPrompt,
   endsWithShellPrompt,
   isShellEscalationCommand,
   matchesPasswordPromptPattern,
@@ -128,6 +129,11 @@ export class ShellIntegrationSession {
   private lastCommand = '';
   private lastCommandStartedAt = 0;
   private pendingGuardStatus: GuardStatus | undefined;
+  /** Без маркеров (тикет 26): шелл, судя по выводу, стоит на СВОЁМ приглашении
+   *  (не REPL) и строки с тех пор не уходили. Только строка, отправленная в
+   *  этом состоянии, — команда шелла для истории и WIN-04; иначе это ввод в
+   *  программу (REPL, ответ на нераспознанный запрос после ложной догадки). */
+  private atOwnShellPrompt = false;
   /** Первый маркер после подключения — приветствие, не результат команды. */
   private firstMarkSeen = false;
   /** Был ли ввод с прошлого маркера: первый ввод означает «приглашение
@@ -241,6 +247,9 @@ export class ShellIntegrationSession {
         result.events.push({ kind: 'password-prompt' });
       }
       if (this.promptGuessArmed) this.schedulePromptGuess(result);
+      // После догадки шелл на приглашении молчит до ввода; вывод снова на
+      // приглашении («[1]+ Done») — ещё там, иной («Enter key:») — догадка была ложной.
+      else if (this.integrationUnconfirmed) this.atOwnShellPrompt = this.tailEndsWithOwnShellPrompt();
     }
 
     return result;
@@ -256,9 +265,14 @@ export class ShellIntegrationSession {
     // программе из вставки, чей запрос PASSWORD_PROMPT_RE не узнал.
     if (this.passwordPromptActive || this.paste) return this.sendRawInput(`${command}\n`);
     const result = emptyResult();
-    this.lastCommand = command.trim();
-    this.lastCommandStartedAt = Date.now();
-    this.pendingGuardStatus = guardStatus;
+    // Тикет 26: без маркеров строка не с приглашения шелла — ввод в программу,
+    // а не команда: выполняется (и попадёт в историю) по-прежнему сама программа.
+    if (!this.integrationUnconfirmed || this.atOwnShellPrompt) {
+      this.lastCommand = command.trim();
+      this.lastCommandStartedAt = Date.now();
+      this.pendingGuardStatus = guardStatus;
+      if (this.integrationUnconfirmed) this.outputSinceMark = '';
+    }
 
     // Команда эскалации (su/sudo/вложенный shell) сменит процесс шелла и хук
     // интеграции пропадёт — взводим реинжект (только если интеграция вообще
@@ -340,6 +354,12 @@ export class ShellIntegrationSession {
         if (this.awaitingFirstMarkAfterSetup) {
           result.events.push({ kind: 'integration-unconfirmed' });
           this.integrationUnconfirmed = true;
+          // Тикет 26: команда до неподтверждения (su/sudo -i при реинжекте) не
+          // записывается — её конца не дождаться, а в выводе эхо настройки с nonce.
+          this.lastCommand = '';
+          this.pendingGuardStatus = undefined;
+          this.outputSinceMark = '';
+          this.atOwnShellPrompt = this.tailEndsWithOwnShellPrompt();
           this.schedulePromptGuess(result);
         }
         break;
@@ -357,10 +377,12 @@ export class ShellIntegrationSession {
           this.integrationUnconfirmed &&
           endsWithShellPrompt(stripTerminalControls(this.outputTail))
         ) {
+          this.atOwnShellPrompt = this.tailEndsWithOwnShellPrompt();
           this.promptGuessArmed = false;
           this.passwordPromptActive = false;
           this.outputTail = '';
           result.events.push({ kind: 'prompt-guess' });
+          if (this.atOwnShellPrompt) this.finishGuessedCommand(result);
         }
         break;
       case 'paste-echo':
@@ -416,6 +438,37 @@ export class ShellIntegrationSession {
     });
   }
 
+  private tailEndsWithOwnShellPrompt(): boolean {
+    return endsWithOwnShellPrompt(stripTerminalControls(this.outputTail));
+  }
+
+  /** Тикет 26: без маркеров конец команды — догадка о приглашении шелла. Exit
+   *  code неизвестен (детектор и тост «упала» молчат), из вывода срезается само
+   *  приглашение — его последняя строка. Сходство с handleCommandFinished
+   *  намеренно не обобщено: там конец цикла решают маркер и CommandGate.
+   *  ponytail: вывод без перевода строки в конце (`printf abc`) уходит вместе
+   *  с приглашением — отделить их можно только маркером. */
+  private finishGuessedCommand(result: ShellIntegrationResult): void {
+    const output = stripTerminalControls(this.outputSinceMark);
+    this.outputSinceMark = '';
+    this.commandGate.reset();
+    const command = this.lastCommand;
+    if (!command) return;
+    this.lastCommand = '';
+    const guardStatus = this.pendingGuardStatus;
+    this.pendingGuardStatus = undefined;
+    result.events.push({
+      kind: 'command-finished',
+      command,
+      exitCode: null,
+      output: output.slice(0, output.lastIndexOf('\n') + 1),
+      guardStatus,
+      typed: true,
+      // Догадка срабатывает через PROMPT_GUESS_MS тишины после приглашения.
+      durationMs: Math.max(0, Date.now() - this.lastCommandStartedAt - PROMPT_GUESS_MS)
+    });
+  }
+
   /** Общее тело первичной отправки ввода и отправки команды: настройка уходит
    *  первой, если ещё не отправлена, дальше — сам ввод, с учётом кредита Enter. */
   private writeRaw(data: string, result: ShellIntegrationResult): void {
@@ -430,6 +483,7 @@ export class ShellIntegrationSession {
     if (newline) this.atPrompt = false;
     if (this.integrationUnconfirmed) {
       if (newline || data.includes('\x03')) {
+        this.atOwnShellPrompt = false;
         // Строка ушла или прервана Ctrl+C. Судим только по выводу ПОСЛЕ неё:
         // у тихой команды (read -s) в хвосте осталось бы прошлое приглашение —
         // догадка посреди команды.
