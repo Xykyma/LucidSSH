@@ -242,7 +242,17 @@ export class ShellIntegrationSession {
     // `cd /tmp\nsudo …` приносит маркер и запрос одним чанком).
     if (afterLastMark) {
       this.outputTail = (this.outputTail + afterLastMark).slice(-256);
-      if (!this.passwordPromptActive && matchesPasswordPromptPattern(this.outputTail)) {
+      // Тикет 27: без маркеров composer мог вернуться по ложной/REPL-догадке, а
+      // запрос секрета бывает любым («Key:», «pass phrase:») — здесь сырой ввод
+      // включает любая незавершённая строка на «:» (ответ программе идёт без
+      // Стража). Следующая догадка по приглашению вернёт composer. С рабочей
+      // интеграцией правило прежнее, точное (TERM-09). Подсказка «ввод скрыт»
+      // показывается и на таком запросе (не больше 3 раз) — отдельный сигнал без
+      // подсказки не стоит лишней ветки IPC.
+      if (
+        !this.passwordPromptActive &&
+        (matchesPasswordPromptPattern(this.outputTail) || (this.integrationUnconfirmed && this.tailAsksForInput()))
+      ) {
         this.passwordPromptActive = true;
         result.events.push({ kind: 'password-prompt' });
       }
@@ -436,6 +446,11 @@ export class ShellIntegrationSession {
       typed: cycle.typed,
       durationMs
     });
+  }
+
+  /** Тикет 27: незавершённая строка на «:» — запрос ввода, возможно секрета. */
+  private tailAsksForInput(): boolean {
+    return endsWithInputPrompt(stripTerminalControls(this.outputTail));
   }
 
   private tailEndsWithOwnShellPrompt(): boolean {
