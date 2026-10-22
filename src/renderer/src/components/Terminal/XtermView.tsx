@@ -12,6 +12,7 @@ import { getCurrentConfig } from '@/stores/config';
 import { attachTerminalWriter, dropTerminalBuffer } from '@/stores/terminalBuffer';
 import { Icon } from '@/components/common/Icon';
 import { reconcileEchoLine, redrawEchoLine } from './localEcho';
+import { mayEndPasswordMode } from './passwordMode';
 import { acceptsInput, acceptsInsert, classifyPaste, stripControlChars } from './pasteInput';
 
 /**
@@ -96,6 +97,9 @@ export function pasteClipboardText(
 const commandBuffers = new Map<string, string>();
 const atPromptState = new Map<string, boolean>();
 const shellStateUnknown = new Map<string, boolean>();
+/** Сессии в режиме пароля (TERM-09): выводит только настоящий маркер, см.
+ *  mayEndPasswordMode. Сбрасывается и потерей Канала. */
+const passwordModeSessions = new Set<string>();
 
 /**
  * Эхо сверяется с экраном, а не считается по счётчику (ADR-0013,
@@ -168,7 +172,10 @@ function dropPendingLine(sessionId: string): void {
 window.lucidSSH.onSessionStatus((sessionId, status) => {
   const open = status === 'connected';
   shellChannelOpen.set(sessionId, open);
-  if (!open) dropPendingLine(sessionId);
+  if (!open) {
+    dropPendingLine(sessionId);
+    passwordModeSessions.delete(sessionId);
+  }
 });
 
 function setShellStateUnknown(sessionId: string, v: boolean): void {
@@ -179,6 +186,7 @@ function setShellStateUnknown(sessionId: string, v: boolean): void {
 
 /** Вызывается на каждый breadcrumb-маркер сессии — «мы точно на промпте». */
 function markAtPrompt(sessionId: string): void {
+  passwordModeSessions.delete(sessionId);
   atPromptState.set(sessionId, true);
   setShellStateUnknown(sessionId, false);
 }
@@ -190,7 +198,9 @@ function markAtPrompt(sessionId: string): void {
  *  прежнего локального таймаута — main знает реальный момент отправки
  *  настройки, а не гадает по первой команде пользователя. */
 function markIntegrationUnconfirmed(sessionId: string): void {
-  atPromptState.set(sessionId, true);
+  // Решение: это тоже синтетический сигнал (таймер), поэтому в режиме пароля
+  // сырой ввод не трогаем — только предупреждение «интеграция не подтверждена».
+  if (!passwordModeSessions.has(sessionId)) atPromptState.set(sessionId, true);
   setShellStateUnknown(sessionId, true);
 }
 
@@ -201,6 +211,7 @@ function markIntegrationUnconfirmed(sessionId: string): void {
 function markPasswordPrompt(sessionId: string): void {
   dropPendingLine(sessionId);
   atPromptState.set(sessionId, false);
+  passwordModeSessions.add(sessionId);
 }
 
 let breadcrumbSubscribed = false;
@@ -209,8 +220,8 @@ function ensureBreadcrumbSubscription(): void {
   breadcrumbSubscribed = true;
   // atPrompt=false — маркер непоследней строки многострочной вставки (тикет 18):
   // считает main, renderer остаётся в сыром вводе до маркера последней.
-  window.lucidSSH.onBreadcrumb((sessionId, _crumb, atPrompt) => {
-    if (atPrompt) markAtPrompt(sessionId);
+  window.lucidSSH.onBreadcrumb((sessionId, _crumb, atPrompt, synthetic) => {
+    if (atPrompt && mayEndPasswordMode(passwordModeSessions.has(sessionId), synthetic)) markAtPrompt(sessionId);
   });
   window.lucidSSH.onIntegrationUnconfirmed((sessionId) => markIntegrationUnconfirmed(sessionId));
   window.lucidSSH.onPasswordPrompt((sessionId) => markPasswordPrompt(sessionId));
@@ -271,6 +282,7 @@ function markEchoStart(sessionId: string): void {
 function clearSessionInputState(sessionId: string): void {
   commandBuffers.delete(sessionId);
   atPromptState.delete(sessionId);
+  passwordModeSessions.delete(sessionId);
   shellStateUnknown.delete(sessionId);
   commandHistories.delete(sessionId);
   historyIndex.delete(sessionId);

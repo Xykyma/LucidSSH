@@ -57,8 +57,10 @@ export type TimerAction =
 
 export type ShellIntegrationEvent =
   /** atPrompt=false — маркер непоследней строки многострочной сырой вставки
-   *  (тикет 18): шелл сейчас же выполнит следующую, renderer остаётся в сыром вводе. */
-  | { kind: 'breadcrumb'; crumb: Breadcrumb; atPrompt: boolean }
+   *  (тикет 18): шелл сейчас же выполнит следующую, renderer остаётся в сыром вводе.
+   *  synthetic=true — «на промпте» объявлен по таймеру эха вставки, а не настоящим
+   *  маркером шелла: из режима пароля (TERM-09) он renderer не выводит. */
+  | { kind: 'breadcrumb'; crumb: Breadcrumb; atPrompt: boolean; synthetic: boolean }
   | {
       kind: 'command-finished';
       command: string;
@@ -203,7 +205,7 @@ export class ShellIntegrationSession {
       const mark = marks[i]!;
       this.awaitingFirstMarkAfterSetup = false;
       this.lastCrumb = mark.crumb;
-      result.events.push({ kind: 'breadcrumb', crumb: mark.crumb, atPrompt: this.atPromptAfterMark(result) });
+      result.events.push({ kind: 'breadcrumb', crumb: mark.crumb, atPrompt: this.atPromptAfterMark(result), synthetic: false });
       this.handleCommandFinished(mark.exitCode, result);
       this.passwordPromptActive = false;
       this.passwordPromptTail = '';
@@ -337,7 +339,7 @@ export class ShellIntegrationSession {
           this.paste = undefined;
           if (!pw && this.lastCrumb) {
             this.atPrompt = true;
-            result.events.push({ kind: 'breadcrumb', crumb: this.lastCrumb, atPrompt: true });
+            result.events.push({ kind: 'breadcrumb', crumb: this.lastCrumb, atPrompt: true, synthetic: true });
           }
         }
         break;
