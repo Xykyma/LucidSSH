@@ -2,11 +2,34 @@
  * Типы Стража для IPC (Data_Structures.md §7.1).
  */
 
+/** Управляющие символы C0 (кроме табуляции и переводов строки), DEL и C1 —
+ *  байты, которыми readline правит строку. Один набор на обе стороны: Страж
+ *  в main анализирует по нему сырой ввод, renderer по нему же делает байты
+ *  видимыми (showControlChars) — показанное не расходится с проверенным. */
+// eslint-disable-next-line no-control-regex
+export const EDIT_CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
+
+/**
+ * Только для показа (предпросмотр вставки, модалка Стража): управляющие байты
+ * правки строки становятся видимыми значками ␁ ␛ ␡, C1 — �. Иначе ` -rf ~`,
+ * Ctrl+A, `rm ` показывается как `-rf ~rm `, и непонятно, почему сработал Страж
+ * (тикет 23). Таб и переводы строки не трогаются; отправляется всегда исходный текст.
+ */
+export function showControlChars(text: string): string {
+  return text.replace(EDIT_CONTROL_CHARS, (c) => {
+    const code = c.charCodeAt(0);
+    if (code < 0x20) return String.fromCharCode(0x2400 + code);
+    return code === 0x7f ? '\u2421' : '\ufffd';
+  });
+}
+
 export type DangerScope = 'file' | 'directory' | 'disk' | 'other';
 
 /** id опасного паттерна (guard/patterns.ts, GUARD-01) — для i18n-объяснения
  *  (guard.explain.<id>) и сравнений в renderer. Закрытый юнион: новый паттерн
- *  без добавления сюда не пройдёт компиляцию (см. PATTERNS в patterns.ts). */
+ *  без добавления сюда не пройдёт компиляцию (см. PATTERNS в patterns.ts).
+ *  'edited-input' — не паттерн, его ставит guard/manager.ts сырому куску с
+ *  правкой строки, которая выполнится (тикет 23). */
 export type DangerPatternId =
   | 'rm-recursive'
   | 'dd-write'
@@ -18,7 +41,8 @@ export type DangerPatternId =
   | 'wipefs'
   | 'fork-bomb'
   | 'drop-database'
-  | 'kill-init';
+  | 'kill-init'
+  | 'edited-input';
 
 export interface DangerousCommandPrompt {
   requestId: string;

@@ -622,7 +622,8 @@ describe('Страж целиком — patterns × manager (сквозные т
     wipefs: { sample: 'wipefs -a /dev/sdc', target: '/dev/sdc' },
     'fork-bomb': { sample: ':(){ :|:& };:', target: ':(){ :|:& };:' },
     'drop-database': { sample: 'mysql -e "DROP DATABASE production"', target: 'production' },
-    'kill-init': { sample: 'kill -9 1', target: 'kill -9 1' }
+    'kill-init': { sample: 'kill -9 1', target: 'kill -9 1' },
+    'edited-input': { sample: ' -rf ~\x01rm \n', target: ' -rf ~\x01rm ' }
   };
 
   beforeEach(async () => {
@@ -688,6 +689,53 @@ describe('Страж целиком — patterns × manager (сквозные т
       expect(submitRawInput('s1', data)).toEqual({ status: 'sent' });
       expect(mockSendInput).toHaveBeenCalledWith('s1', data);
     });
+
+    it('тикет 19 со строкой, которая выполнится, — по-прежнему модалка с настоящей целью', () => {
+      const res = submitRawInput('s1', '\x15rm -rf /var/www\n');
+      if (res.status !== 'blocked') throw new Error('expected blocked');
+      expect(res.prompt.patternId).toBe('rm-recursive');
+      expect(res.prompt.target).toBe('/var/www');
+    });
+  });
+
+  // Тикет 23: readline двигает курсор, вырезает и вклеивает — команду можно
+  // собрать из кусков в любом порядке. Каждый образец проверен в настоящем bash
+  // 4.4 (Docker): выполняет `rm -rf`. Эмулировать правку нельзя полностью
+  // (vi-mode, zsh, Ctrl+R, Alt+.), поэтому правящий байт + байт, выполняющий
+  // строку, — модалка в любом случае.
+  describe('сырой путь — правка строки, которая выполнится, требует подтверждения', () => {
+    const EDITED = [
+      ' -rf ~\x01rm \n', // Ctrl+A, затем `rm `
+      ' -rf ~\x15rm\x19\n', // Ctrl+U, `rm`, Ctrl+Y
+      'rm -f /tmp/v' + '\x02'.repeat(8) + 'r\n', // Ctrl+B ×8 — `r` внутрь `-f`
+      'rmx\x7f -rf ~\n', // DEL в имени — пробел из тикета 19 дал бы `rmx  -rf`
+      ' -rf ~\x1b[Hrm \r', // Home
+      ' -rf ~\x01rm \x0f' // Ctrl+O выполняет строку без перевода строки
+    ];
+    for (const data of EDITED) {
+      it(`${JSON.stringify(data)} — blocked словом, в pending уходят исходные байты`, () => {
+        const res = submitRawInput('s1', data);
+        if (res.status !== 'blocked') throw new Error('expected blocked');
+        expect(res.prompt.patternId).toBe('edited-input');
+        expect(res.prompt.confirmationKind).toBe('word');
+        expect(mockSendInput).not.toHaveBeenCalled();
+        expect(confirmDangerousCommand(res.prompt.requestId, res.prompt.confirmationText)).toBe(true);
+        expect(mockSendInput).toHaveBeenCalledWith('s1', data);
+      });
+    }
+
+    const HARMLESS = [
+      'ls\x01 -la /var', // правка без выполнения: строку пользователь увидит в терминале
+      '\x1b[<0;12;5M', // мышь (SGR) в vim/htop
+      '\x1b[1;5D', // Ctrl+←
+      'ls -la\npwd\n' // многострочная вставка без управляющих байтов
+    ];
+    for (const data of HARMLESS) {
+      it(`${JSON.stringify(data)} — уходит как есть`, () => {
+        expect(submitRawInput('s1', data)).toEqual({ status: 'sent' });
+        expect(mockSendInput).toHaveBeenCalledWith('s1', data);
+      });
+    }
   });
 
   it('инвариант 2 — опасность (analyzeDangers) проверяется раньше риска доступа (GUARD-07)', () => {

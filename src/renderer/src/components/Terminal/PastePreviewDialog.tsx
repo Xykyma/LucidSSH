@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { showControlChars } from '@shared/guard';
 
 /**
  * Предпросмотр многострочной вставки (TERM-05, §14 гайда): пользователь видит
@@ -58,7 +59,7 @@ export function PastePreviewDialog({
               key={i}
               className={DANGER_HINT.test(line) ? 'whitespace-pre text-danger-text' : 'whitespace-pre text-text-body'}
             >
-              {line || ' '}
+              {showControlChars(line) || ' '}
             </div>
           ))}
         </div>
