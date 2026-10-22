@@ -8,6 +8,7 @@ import {
   EchoGate,
   detectInteractiveProgram,
   endsWithInputPrompt,
+  endsWithShellPrompt,
   isShellEscalationCommand,
   matchesPasswordPromptPattern,
   shellIntegrationSetup,
@@ -45,11 +46,14 @@ const PASTE_ECHO_WAIT_MS = 500;
 // длины не ищем вовсе (`ls`, `cd` нашлись бы и в самом приглашении).
 const PASTE_FRAGMENT = 16;
 const MIN_PASTE_FRAGMENT = 3;
+// Тикет 25: без маркеров «на промпте» угадывается по тишине после отправленной
+// строки и форме приглашения в хвосте вывода.
+const PROMPT_GUESS_MS = 1500;
 
 /** Именованные таймеры, которыми управляет коробка. Реальные `setTimeout`
  *  остаются у вызывающего — коробка только просит завести/отменить их и
  *  ожидает вызова `tick(timer)`, когда время вышло. */
-export type ShellIntegrationTimer = 'setup-silence' | 'setup-cap' | 'echo-flush' | 'reinject' | 'paste-echo';
+export type ShellIntegrationTimer = 'setup-silence' | 'setup-cap' | 'echo-flush' | 'reinject' | 'paste-echo' | 'prompt-guess';
 
 export type TimerAction =
   | { timer: ShellIntegrationTimer; action: 'schedule'; ms: number }
@@ -83,7 +87,11 @@ export type ShellIntegrationEvent =
   /** echo-flush сработал, а маркер после последней отправки настройки
    *  (первичной или реинжекта) так и не пришёл — shell-интеграция не
    *  подтвердилась (см. .scratch/prompt-confirmation-signal/spec.md). */
-  | { kind: 'integration-unconfirmed' };
+  | { kind: 'integration-unconfirmed' }
+  /** Интеграция не подтвердилась, а после отправленной строки вывод затих на
+   *  приглашении шелла (тикет 25): renderer снова на промпте под Стражем, режим
+   *  пароля окончен. С рабочей интеграцией не испускается — там решает маркер. */
+  | { kind: 'prompt-guess' };
 
 /** Ответ коробки на любой из её методов: что показать в терминале, что
  *  записать в provод, какие таймеры (пере)завести/отменить, что произошло —
@@ -140,10 +148,15 @@ export class ShellIntegrationSession {
   private reinjectArmed = false;
   /** Хвост вывода с момента взвода реинжекта — распознавание запроса пароля. */
   private reinjectTail = '';
-  /** Хвост вывода для детекции запроса пароля (TERM-09), независим от реинжекта. */
-  private passwordPromptTail = '';
+  /** Хвост вывода для детекции запроса пароля (TERM-09) и формы приглашения
+   *  без маркеров (тикет 25), независим от реинжекта. */
+  private outputTail = '';
   /** true между «увидели запрос пароля» и следующим маркером. */
   private passwordPromptActive = false;
+  /** Последний echo-flush ушёл без маркера, и маркера с тех пор не было. */
+  private integrationUnconfirmed = false;
+  /** Без маркеров: после отправленной строки ждём тишину на приглашении. */
+  private promptGuessArmed = false;
   /** Шелл на приглашении: последний breadcrumb ушёл с atPrompt и с тех пор не
    *  отправлено ни одного перевода строки — то же, что atPromptState в renderer. */
   private atPrompt = false;
@@ -208,7 +221,9 @@ export class ShellIntegrationSession {
       result.events.push({ kind: 'breadcrumb', crumb: mark.crumb, atPrompt: this.atPromptAfterMark(result), synthetic: false });
       this.handleCommandFinished(mark.exitCode, result);
       this.passwordPromptActive = false;
-      this.passwordPromptTail = '';
+      this.outputTail = '';
+      this.integrationUnconfirmed = false;
+      this.promptGuessArmed = false;
     }
     const afterLastMark = effective[effective.length - 1] ?? '';
     this.appendOutput(afterLastMark);
@@ -220,11 +235,12 @@ export class ShellIntegrationSession {
     // renderer по нему уходит из «на промпте» (многострочная вставка
     // `cd /tmp\nsudo …` приносит маркер и запрос одним чанком).
     if (afterLastMark) {
-      this.passwordPromptTail = (this.passwordPromptTail + afterLastMark).slice(-256);
-      if (!this.passwordPromptActive && matchesPasswordPromptPattern(this.passwordPromptTail)) {
+      this.outputTail = (this.outputTail + afterLastMark).slice(-256);
+      if (!this.passwordPromptActive && matchesPasswordPromptPattern(this.outputTail)) {
         this.passwordPromptActive = true;
         result.events.push({ kind: 'password-prompt' });
       }
+      if (this.promptGuessArmed) this.schedulePromptGuess(result);
     }
 
     return result;
@@ -315,16 +331,37 @@ export class ShellIntegrationSession {
         if (buffered) {
           result.display = buffered;
           this.appendOutput(buffered);
+          this.outputTail = (this.outputTail + buffered).slice(-256);
         }
         // То же самое обстоятельство («настройка ушла, маркер за 3 сек. не
         // пришёл») сигналит и renderer'у — пора вернуться под защиту Стража.
+        // Режим пароля это событие не снимает; снимет догадка по приглашению
+        // (так закрыт и реинжект, сбросивший запрос пароля молча).
         if (this.awaitingFirstMarkAfterSetup) {
           result.events.push({ kind: 'integration-unconfirmed' });
+          this.integrationUnconfirmed = true;
+          this.schedulePromptGuess(result);
         }
         break;
       }
       case 'reinject':
         this.handleReinjectTick(result);
+        break;
+      case 'prompt-guess':
+        // ponytail: эвристика формы приглашения — нестандартный PS1 (без $#%>
+        // в конце) оставляет сессию в сыром вводе, как до тикета 25; ложное
+        // срабатывание (вывод затих на «>») уводит в набор под Стражем — в
+        // безопасную сторону. Точнее — только маркер, т.е. рабочая интеграция.
+        if (
+          this.promptGuessArmed &&
+          this.integrationUnconfirmed &&
+          endsWithShellPrompt(stripTerminalControls(this.outputTail))
+        ) {
+          this.promptGuessArmed = false;
+          this.passwordPromptActive = false;
+          this.outputTail = '';
+          result.events.push({ kind: 'prompt-guess' });
+        }
         break;
       case 'paste-echo':
         // Эха следующей строки не было — приглашение настоящее. Но не при
@@ -389,7 +426,22 @@ export class ShellIntegrationSession {
       this.outputSinceMark = '';
     }
     this.commandGate.noteInput(data);
-    if (/[\r\n]/.test(data)) this.atPrompt = false;
+    const newline = /[\r\n]/.test(data);
+    if (newline) this.atPrompt = false;
+    if (this.integrationUnconfirmed) {
+      if (newline || data.includes('\x03')) {
+        // Строка ушла или прервана Ctrl+C. Судим только по выводу ПОСЛЕ неё:
+        // у тихой команды (read -s) в хвосте осталось бы прошлое приглашение —
+        // догадка посреди команды.
+        this.outputTail = '';
+        this.schedulePromptGuess(result);
+      } else if (this.promptGuessArmed) {
+        // Набор следующей строки уже идёт сырым — догадка разрезала бы её, и
+        // Страж увидел бы только хвост. Ждём её Enter.
+        this.promptGuessArmed = false;
+        result.timerActions.push({ timer: 'prompt-guess', action: 'cancel' });
+      }
+    }
     result.toWrite += data;
   }
 
@@ -433,6 +485,11 @@ export class ShellIntegrationSession {
     );
   }
 
+  private schedulePromptGuess(result: ShellIntegrationResult): void {
+    this.promptGuessArmed = true;
+    result.timerActions.push({ timer: 'prompt-guess', action: 'schedule', ms: PROMPT_GUESS_MS });
+  }
+
   private armSetupIfNeeded(result: ShellIntegrationResult): void {
     if (this.setupSent) return;
     this.setupSent = true;
@@ -454,7 +511,7 @@ export class ShellIntegrationSession {
     // уходит, запрос пароля уже отвечен. Без сброса сессия, где маркер так и
     // не пришёл, слала бы все команды сырыми (writeCommand).
     this.passwordPromptActive = false;
-    this.passwordPromptTail = '';
+    this.outputTail = '';
     this.echoGate.arm();
     this.awaitingFirstMarkAfterSetup = true;
     result.toWrite += shellIntegrationSetup(this.nonce);

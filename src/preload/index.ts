@@ -191,6 +191,7 @@ const api = {
     subscribe(IPC.evPasswordPrompt, cb),
   onIntegrationUnconfirmed: (cb: (sessionId: string) => void): (() => void) =>
     subscribe(IPC.evIntegrationUnconfirmed, cb),
+  onPromptGuess: (cb: (sessionId: string) => void): (() => void) => subscribe(IPC.evPromptGuess, cb),
   onInteractiveProgram: (
     cb: (sessionId: string, program: InteractiveProgramName) => void
   ): (() => void) => subscribe(IPC.evInteractiveProgram, cb),

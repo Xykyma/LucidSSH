@@ -459,9 +459,23 @@ export const PASSWORD_PROMPT_RE =
  * (промпты шеллов кончаются на #/$/%/>, запросы ввода — почти всегда на «:»).
  */
 export function endsWithInputPrompt(output: string): boolean {
-  const lastLine = output.slice(output.lastIndexOf('\n') + 1).replace(/[ \t\r]+$/, '');
-  if (lastLine.endsWith(':')) return true;
-  return PASSWORD_PROMPT_RE.test(lastLine);
+  const line = lastLine(output);
+  if (line.endsWith(':')) return true;
+  return PASSWORD_PROMPT_RE.test(line);
+}
+
+/** Последняя (незавершённая) строка вывода без хвостовых пробелов. */
+function lastLine(output: string): string {
+  return output.slice(output.lastIndexOf('\n') + 1).replace(/[ \t\r]+$/, '');
+}
+
+/**
+ * Хвост вывода похож на приглашение шелла: последняя строка кончается на
+ * $/#/%/> (тикет 25, сессия без маркеров). Запрос пароля кончается на «:» —
+ * под форму не подходит. Вход — уже без управляющих последовательностей.
+ */
+export function endsWithShellPrompt(output: string): boolean {
+  return /[$#%>]$/.test(lastLine(output));
 }
 
 /**
@@ -471,8 +485,7 @@ export function endsWithInputPrompt(output: string): boolean {
  * намеренно не распознаются, чтобы не подсказывать невпопад).
  */
 export function matchesPasswordPromptPattern(output: string): boolean {
-  const lastLine = output.slice(output.lastIndexOf('\n') + 1).replace(/[ \t\r]+$/, '');
-  return PASSWORD_PROMPT_RE.test(lastLine);
+  return PASSWORD_PROMPT_RE.test(lastLine(output));
 }
 
 /**

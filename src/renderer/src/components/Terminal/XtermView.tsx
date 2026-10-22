@@ -97,8 +97,9 @@ export function pasteClipboardText(
 const commandBuffers = new Map<string, string>();
 const atPromptState = new Map<string, boolean>();
 const shellStateUnknown = new Map<string, boolean>();
-/** Сессии в режиме пароля (TERM-09): выводит только настоящий маркер, см.
- *  mayEndPasswordMode. Сбрасывается и потерей Канала. */
+/** Сессии в режиме пароля (TERM-09): из breadcrumb'ов выводит только
+ *  настоящий маркер (mayEndPasswordMode); в сессии без маркеров — prompt-guess
+ *  (markPromptGuess, тикет 25). Сбрасывается и потерей Канала. */
 const passwordModeSessions = new Set<string>();
 
 /**
@@ -198,10 +199,22 @@ function markAtPrompt(sessionId: string): void {
  *  прежнего локального таймаута — main знает реальный момент отправки
  *  настройки, а не гадает по первой команде пользователя. */
 function markIntegrationUnconfirmed(sessionId: string): void {
-  // Решение: это тоже синтетический сигнал (таймер), поэтому в режиме пароля
-  // сырой ввод не трогаем — только предупреждение «интеграция не подтверждена».
+  // Решение (тикеты 24, 25): это тоже синтетический сигнал (таймер), поэтому в
+  // режиме пароля сырой ввод не трогаем — только предупреждение. Из режима
+  // пароля без маркеров выводит prompt-guess: main шлёт его, когда ответ ушёл и
+  // вывод затих на приглашении шелла, а не на новом запросе пароля.
   if (!passwordModeSessions.has(sessionId)) atPromptState.set(sessionId, true);
   setShellStateUnknown(sessionId, true);
+}
+
+/** Без маркеров (тикет 25): main угадал приглашение шелла по тишине после
+ *  отправленной строки — снова набор под Стражем, режим пароля окончен.
+ *  Только в сессии с неподтверждённой интеграцией: где маркер есть, решает он
+ *  (тикеты 22/24). Предупреждение остаётся — это догадка, не маркер. */
+function markPromptGuess(sessionId: string): void {
+  if (!shellStateUnknown.get(sessionId)) return;
+  passwordModeSessions.delete(sessionId);
+  atPromptState.set(sessionId, true);
 }
 
 /** Сервер спросил пароль (TERM-09, детекция в main) — сигнал авторитетен:
@@ -224,6 +237,7 @@ function ensureBreadcrumbSubscription(): void {
     if (atPrompt && mayEndPasswordMode(passwordModeSessions.has(sessionId), synthetic)) markAtPrompt(sessionId);
   });
   window.lucidSSH.onIntegrationUnconfirmed((sessionId) => markIntegrationUnconfirmed(sessionId));
+  window.lucidSSH.onPromptGuess((sessionId) => markPromptGuess(sessionId));
   window.lucidSSH.onPasswordPrompt((sessionId) => markPasswordPrompt(sessionId));
 }
 
