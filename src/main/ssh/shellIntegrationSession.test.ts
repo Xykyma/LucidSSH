@@ -222,6 +222,7 @@ describe('ShellIntegrationSession — запрос пароля (TERM-09)', () =
     box.sendRawInput('hunter2\n');
     box.feed('\r\n');
     box.tick('reinject');
+    box.feed('root@h:~# '); // приглашение нового шелла, придержанное EchoGate
     // маркер так и не пришёл — renderer по integration-unconfirmed снова на промпте
     expect(box.tick('echo-flush').events).toContainEqual({ kind: 'integration-unconfirmed' });
 
@@ -336,25 +337,27 @@ describe('ShellIntegrationSession — integration-unconfirmed (страховк�
   });
 });
 
+/** Интеграция не подтвердилась: настройка ушла, echo-flush без маркера. */
+function unconfirmed(): ShellIntegrationSession {
+  const box = new ShellIntegrationSession(NONCE);
+  box.feed('Welcome\r\n$ ');
+  box.tick('setup-silence');
+  box.feed('эхо настройки без маркера\r\n$ ');
+  box.tick('echo-flush');
+  box.tick('prompt-guess');
+  return box;
+}
+
+const eventKinds = (r: ShellIntegrationResult): string[] => r.events.map((e) => e.kind);
+
 describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия без маркеров)', () => {
   const GUESS = expect.objectContaining({ timer: 'prompt-guess', action: 'schedule' });
-
-  /** Интеграция не подтвердилась: настройка ушла, echo-flush без маркера. */
-  function unconfirmed(): ShellIntegrationSession {
-    const box = new ShellIntegrationSession(NONCE);
-    box.feed('Welcome\r\n$ ');
-    box.tick('setup-silence');
-    box.feed('эхо настройки без маркера\r\n$ ');
-    box.tick('echo-flush');
-    box.tick('prompt-guess');
-    return box;
-  }
 
   it('после команды и приглашения шелла в тишине — prompt-guess (Страж снова на наборе)', () => {
     const box = unconfirmed();
     expect(box.writeCommand('ls').timerActions).toContainEqual(GUESS);
     expect(box.feed('a b c\r\n$ ').timerActions).toContainEqual(GUESS);
-    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+    expect(eventKinds(box.tick('prompt-guess'))).toEqual(['prompt-guess', 'command-finished']);
   });
 
   it('пароль sudo: на запросе молчит, после ответа и приглашения — prompt-guess; следующая команда не сырая', () => {
@@ -365,7 +368,7 @@ describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия 
 
     expect(box.sendRawInput('\r').timerActions).toContainEqual(GUESS);
     box.feed('\r\n$ ');
-    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+    expect(eventKinds(box.tick('prompt-guess'))).toEqual(['prompt-guess', 'command-finished']);
 
     box.writeCommand('rm -rf /tmp/x');
     expect(box.runningCommand()).toBe('rm -rf /tmp/x');
@@ -380,7 +383,7 @@ describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия 
     expect(box.tick('prompt-guess').events).toEqual([]);
     box.sendRawInput('\r');
     box.feed('\r\n\x1b[32m$\x1b[0m ');
-    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+    expect(eventKinds(box.tick('prompt-guess'))).toEqual(['prompt-guess', 'command-finished']);
 
     // После возврата новый запрос пароля снова распознаётся (нарастающий фронт).
     box.writeCommand('sudo -k; sudo true');
@@ -393,7 +396,7 @@ describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия 
     box.feed('progress 50');
     expect(box.tick('prompt-guess').events).toEqual([]);
     box.feed('\r\n$ ');
-    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+    expect(eventKinds(box.tick('prompt-guess'))).toEqual(['prompt-guess', 'command-finished']);
     expect(box.tick('prompt-guess').events).toEqual([]);
   });
 
@@ -419,7 +422,7 @@ describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия 
     box.writeCommand('sleep 100');
     box.sendRawInput('\x03');
     box.feed('^C\r\n$ ');
-    expect(box.tick('prompt-guess').events).toEqual([{ kind: 'prompt-guess' }]);
+    expect(eventKinds(box.tick('prompt-guess'))).toEqual(['prompt-guess', 'command-finished']);
   });
 
   it('сессия с рабочей интеграцией: догадка не заводится, из режима пароля выводит только маркер', () => {
@@ -452,6 +455,143 @@ describe('ShellIntegrationSession — prompt-guess (тикет 25: сессия 
     const box = unconfirmed();
     box.feed(mk('u', 'h', '/home/u', '1000', '0'));
     expect(box.writeCommand('ls').timerActions).not.toContainEqual(GUESS);
+  });
+});
+
+describe('ShellIntegrationSession — история и занятость без маркеров (тикет 26)', () => {
+  type Finished = Extract<ShellIntegrationResult['events'][number], { kind: 'command-finished' }>;
+  const finished = (r: ShellIntegrationResult): Finished[] =>
+    r.events.filter((e): e is Finished => e.kind === 'command-finished');
+
+  it('догадка о приглашении завершает команду: запись без exit code, вывод без приглашения, сессия свободна', () => {
+    const box = unconfirmed();
+    box.writeCommand('ls');
+    expect(box.isBusy()).toBe(true);
+    box.feed('a b c\r\n$ ');
+    const [done, ...rest] = finished(box.tick('prompt-guess'));
+    expect(rest).toEqual([]);
+    expect(done).toMatchObject({ command: 'ls', exitCode: null, typed: true });
+    expect(done!.output).toContain('a b c');
+    expect(done!.output).not.toContain('$');
+    expect(box.runningCommand()).toBeNull();
+  });
+
+  it('команда ещё печатает (sleep; echo, tail -f) — остаётся занятой', () => {
+    const box = unconfirmed();
+    box.writeCommand('sleep 5; echo done');
+    expect(finished(box.tick('prompt-guess'))).toEqual([]);
+    expect(box.runningCommand()).toBe('sleep 5; echo done');
+    box.feed('done\r\n$ ');
+    expect(finished(box.tick('prompt-guess'))).toHaveLength(1);
+    expect(box.isBusy()).toBe(false);
+
+    box.writeCommand('tail -f /var/log/syslog');
+    box.feed('Oct 23 10:00:01 h cron[1]: job\r\nOct 23 10:00:02 h cron[1]: job\r\n');
+    expect(finished(box.tick('prompt-guess'))).toEqual([]);
+    expect(box.runningCommand()).toBe('tail -f /var/log/syslog');
+  });
+
+  it('ответ на распознанный запрос пароля не попадает в историю', () => {
+    const box = unconfirmed();
+    box.writeCommand('sudo true');
+    box.feed('[sudo] password for u: ');
+    box.sendRawInput('hunter2\r');
+    box.feed('\r\nSorry, try again.\r\n[sudo] password for u: ');
+    // Сигнал режима пароля не дошёл — ответ пришёл через композер.
+    box.writeCommand('hunter3');
+    box.feed('\r\n$ ');
+    const done = finished(box.tick('prompt-guess'));
+    expect(done.map((e) => e.command)).toEqual(['sudo true']);
+    expect(JSON.stringify(done)).not.toMatch(/hunter/);
+  });
+
+  it('ответ на нераспознанный запрос («…:») не попадает в историю', () => {
+    const box = unconfirmed();
+    box.writeCommand('mytool');
+    box.feed('Enter key: ');
+    expect(finished(box.tick('prompt-guess'))).toEqual([]);
+    box.sendRawInput('s3cret\r');
+    box.feed('\r\nok\r\n$ ');
+    const done = finished(box.tick('prompt-guess'));
+    expect(done.map((e) => e.command)).toEqual(['mytool']);
+    expect(JSON.stringify(done)).not.toContain('s3cret');
+  });
+
+  it('ложная догадка на «%»: строка из композера после «Enter key:» в историю не идёт, даже после Ctrl+C', () => {
+    const box = unconfirmed();
+    box.writeCommand('mytool');
+    box.feed('Progress 50%');
+    expect(finished(box.tick('prompt-guess'))).toHaveLength(1); // ложно: вывод затих на «%»
+    box.feed('\r\nEnter key: ');
+    box.sendRawInput('\x03'); // программа ловит SIGINT; ^C ещё не напечатан
+    box.writeCommand('s3cret');
+    box.feed('\r\nok\r\n$ ');
+    expect(finished(box.tick('prompt-guess'))).toEqual([]);
+    expect(box.isBusy()).toBe(false);
+  });
+
+  it('REPL (mysql>, >>>, psql =#): строки в нём не команды — занята сама программа, в истории только она', () => {
+    for (const [repl, prompt] of [
+      ['mysql -u root -p', 'mysql> '],
+      ['python3', '>>> '],
+      ['psql -W', 'postgres=# ']
+    ] as const) {
+      const box = unconfirmed();
+      box.writeCommand(repl);
+      expect(box.feed('Enter password: ').events).toEqual([{ kind: 'password-prompt' }]);
+      box.sendRawInput('pwSECRET\r');
+      box.feed(`\r\nWelcome\r\n${prompt}`);
+      const guess = box.tick('prompt-guess');
+      expect(eventKinds(guess)).toEqual(['prompt-guess']); // композер снова под Стражем (тикет 25)
+      expect(box.runningCommand()).toBe(repl);
+
+      box.writeCommand("ALTER USER 'u' IDENTIFIED BY 'sqlSECRET';");
+      box.feed(`Query OK\r\n${prompt}`);
+      expect(finished(box.tick('prompt-guess'))).toEqual([]);
+      expect(box.runningCommand()).toBe(repl);
+
+      box.writeCommand('quit');
+      box.feed('Bye\r\n$ ');
+      const done = finished(box.tick('prompt-guess'));
+      expect(done.map((e) => e.command)).toEqual([repl]);
+      expect(box.isBusy()).toBe(false);
+      expect(JSON.stringify(done.map((e) => e.command))).not.toContain('SECRET');
+    }
+  });
+
+  it('реинжект не подтвердился: команда эскалации не записывается, эхо настройки (nonce) не в выводе', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.writeCommand('su - bob');
+    box.tick('reinject');
+    box.feed(`${SETUP}\r\nbob@h:~$ `);
+    box.tick('echo-flush');
+    expect(box.isBusy()).toBe(false);
+    expect(finished(box.tick('prompt-guess'))).toEqual([]);
+
+    box.writeCommand('ls');
+    box.feed('a\r\nbob@h:~$ ');
+    const done = finished(box.tick('prompt-guess'));
+    expect(done.map((e) => e.command)).toEqual(['ls']);
+    expect(JSON.stringify(done)).not.toContain(NONCE);
+  });
+
+  it('вывод после догадки, снова кончающийся приглашением (уведомление о задании), запись не отменяет', () => {
+    const box = unconfirmed();
+    box.feed('[1]+  Done                    sleep 1\r\n$ ');
+    box.writeCommand('ls');
+    box.feed('a\r\n$ ');
+    expect(finished(box.tick('prompt-guess')).map((e) => e.command)).toEqual(['ls']);
+  });
+
+  it('сессия с рабочей интеграцией по-прежнему завершает команду только маркером', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    warmUp(box);
+    box.tick('echo-flush');
+    box.writeCommand('ls');
+    box.feed('a\r\n$ ');
+    expect(finished(box.tick('prompt-guess'))).toEqual([]);
+    expect(box.runningCommand()).toBe('ls');
   });
 });
 

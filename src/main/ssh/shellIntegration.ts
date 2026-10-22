@@ -479,6 +479,15 @@ export function endsWithShellPrompt(output: string): boolean {
 }
 
 /**
+ * Приглашение самого шелла, а не REPL (тикет 26): `$`, `#`, `%` — но не `>`
+ * (mysql>, >>>, sqlite>, node) и не `=#` (psql). Без маркеров только оно
+ * завершает команду для истории и WIN-04: строка, набранная в REPL, — не команда.
+ */
+export function endsWithOwnShellPrompt(output: string): boolean {
+  return /(?<!=)[$#%]$/.test(lastLine(output));
+}
+
+/**
  * TERM-09: подсказка «ввод пароля скрыт» показывается только на известные,
  * явные приглашения — в отличие от endsWithInputPrompt (реинжект, BRD-03/04)
  * здесь НЕТ локале-независимой эвристики по «:» (произвольные приглашения
