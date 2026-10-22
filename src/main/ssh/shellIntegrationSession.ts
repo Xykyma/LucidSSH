@@ -325,11 +325,20 @@ export class ShellIntegrationSession {
         this.handleReinjectTick(result);
         break;
       case 'paste-echo':
-        // Эха следующей строки не было — приглашение настоящее.
-        if (this.paste && this.lastCrumb) {
+        // Эха следующей строки не было — приглашение настоящее. Но не при
+        // запросе пароля: из режима пароля выводит только настоящий маркер
+        // (TERM-09), иначе набираемый пароль печатается открыто.
+        // ponytail: строки вставки после запроса пароля больше не отслеживаются —
+        // маркер su вернёт «на промпт» раньше времени, пока на следующем Enter
+        // atPrompt не сбросится; держать paste значило бы рисковать застрявшим
+        // сырым вводом после Ctrl+C.
+        if (this.paste) {
+          const pw = this.passwordPromptActive;
           this.paste = undefined;
-          this.atPrompt = true;
-          result.events.push({ kind: 'breadcrumb', crumb: this.lastCrumb, atPrompt: true });
+          if (!pw && this.lastCrumb) {
+            this.atPrompt = true;
+            result.events.push({ kind: 'breadcrumb', crumb: this.lastCrumb, atPrompt: true });
+          }
         }
         break;
     }
