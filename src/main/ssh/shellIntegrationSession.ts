@@ -351,7 +351,7 @@ export class ShellIntegrationSession {
       case 'echo-flush': {
         // Страховка: маркер не пришёл (shell без bash/zsh) — показать
         // накопленное вместо того, чтобы молча его проглотить.
-        const buffered = this.echoGate.flush();
+        const buffered = this.withoutSetupEcho(this.echoGate.flush());
         if (buffered) {
           result.display = buffered;
           this.appendOutput(buffered);
@@ -446,6 +446,15 @@ export class ShellIntegrationSession {
       typed: cycle.typed,
       durationMs
     });
+  }
+
+  /** Тикет 28: из аварийно показанного буфера убираются строки эха настройки —
+   *  в них nonce сессии. Остальной вывод (MOTD, ошибка шелла) остаётся. */
+  private withoutSetupEcho(buffered: string): string {
+    const lines = buffered.split(/(?<=\n)/);
+    const kept = lines.filter((l) => !l.includes(this.nonce) && !l.includes('__lucidssh_mark'));
+    // Стираем приглашение, к которому приклеилось эхо первой строки.
+    return kept.length === lines.length ? buffered : '\r\x1b[K' + kept.join('');
   }
 
   /** Тикет 27: незавершённая строка на «:» — запрос ввода, возможно секрета. */
@@ -581,9 +590,10 @@ export class ShellIntegrationSession {
     // не пришёл, слала бы все команды сырыми (writeCommand).
     this.passwordPromptActive = false;
     this.outputTail = '';
-    this.echoGate.arm();
+    const setup = shellIntegrationSetup(this.nonce);
+    this.echoGate.arm(setup.slice(0, -1).split('\n').pop());
     this.awaitingFirstMarkAfterSetup = true;
-    result.toWrite += shellIntegrationSetup(this.nonce);
+    result.toWrite += setup;
     result.timerActions.push({ timer: 'echo-flush', action: 'schedule', ms: ECHO_FLUSH_TIMEOUT_MS });
   }
 

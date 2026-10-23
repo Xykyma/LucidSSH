@@ -525,6 +525,12 @@ export function copySelection(sessionId: string): void {
   if (sel) window.lucidSSH.clipboardWrite(sel);
 }
 
+/** Вернуть фокус в терминал сессии — после закрытия модалки без вставки/отправки
+ *  (отмена Стража, предпросмотра): иначе набор уходит «в никуда» до клика. */
+export function focusTerminal(sessionId: string): void {
+  cache.get(sessionId)?.term.focus();
+}
+
 /** Сырая отправка текста в сессию, без буфера/Стража — только когда сессия
  *  НЕ на промпте (внутри интерактивной программы), см. insertText ниже.
  *  Line endings нормализуются в LF: буфер обмена Windows кладёт CRLF, а bash

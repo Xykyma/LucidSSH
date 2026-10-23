@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
-import { showControlChars } from '@shared/guard';
+import { ControlText, hasControlChars } from '@/components/Guard/ControlText';
 
 /**
  * Предпросмотр многострочной вставки (TERM-05, §14 гайда): пользователь видит
@@ -26,6 +26,7 @@ export function PastePreviewDialog({
   const { t } = useTranslation();
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const hasDanger = lines.some((l) => DANGER_HINT.test(l));
+  const hasControl = hasControlChars(text);
 
   const backdrop = useBackdropClose(onCancel);
   useEscapeClose('paste-preview-dialog', onCancel);
@@ -53,13 +54,18 @@ export function PastePreviewDialog({
             {t('paste.dangerNote')}
           </div>
         )}
+        {hasControl && (
+          <div className="mx-5 mt-2 rounded-[6px] border border-warning/25 bg-warning/10 px-3 py-2 text-[11.5px] text-warning-text">
+            {t('paste.controlNote')}
+          </div>
+        )}
         <div className="m-5 min-h-0 flex-1 overflow-auto rounded-[6px] border border-border-default bg-bg-base p-3 font-mono text-[11.5px]">
           {lines.map((line, i) => (
             <div
               key={i}
               className={DANGER_HINT.test(line) ? 'whitespace-pre text-danger-text' : 'whitespace-pre text-text-body'}
             >
-              {showControlChars(line) || ' '}
+              {line ? <ControlText text={line} /> : ' '}
             </div>
           ))}
         </div>

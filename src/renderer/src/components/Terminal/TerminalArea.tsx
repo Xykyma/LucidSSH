@@ -16,7 +16,8 @@ import {
   getPendingLine,
   confirmPendingLine,
   pasteClipboardText,
-  pasteText
+  pasteText,
+  focusTerminal
 } from './XtermView';
 import { PastePreviewDialog } from './PastePreviewDialog';
 import { TerminalContextMenu } from './TerminalContextMenu';
@@ -552,7 +553,10 @@ export function TerminalArea(): JSX.Element {
             pasteText(active.sessionId, withTrailingNewline);
             setPastePreview(null);
           }}
-          onCancel={() => setPastePreview(null)}
+          onCancel={() => {
+            setPastePreview(null);
+            focusTerminal(active.sessionId);
+          }}
         />
       )}
 
@@ -567,6 +571,7 @@ export function TerminalArea(): JSX.Element {
           onCancel={() => {
             window.lucidSSH.cancelDangerousCommand(dangerPrompt.requestId);
             setDangerPrompt(null);
+            focusTerminal(dangerPrompt.sessionId);
           }}
         />
       )}
@@ -584,6 +589,7 @@ export function TerminalArea(): JSX.Element {
           onCancel={() => {
             window.lucidSSH.cancelDangerousCommand(accessRiskPrompt.requestId);
             setAccessRiskPrompt(null);
+            focusTerminal(accessRiskPrompt.sessionId);
           }}
         />
       )}

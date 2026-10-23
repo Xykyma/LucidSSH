@@ -260,14 +260,23 @@ export class BreadcrumbParser {
 export class EchoGate {
   private suppressing = false;
   private buffer = '';
+  /** Тикет 28: эхо последней строки настройки, ещё не вырезанное после первого
+   *  маркера. Хук ставит предыдущая строка — маркер приходит до того, как
+   *  readline допечатает эхо финального вызова. */
+  private trailingEcho: string | undefined;
+  private lastLine: string | undefined;
 
   get active(): boolean {
     return this.suppressing;
   }
 
-  arm(): void {
+  /** lastLine — последняя строка настройки без перевода строки: её эхо, пришедшее
+   *  после первого маркера, тоже вырезается. */
+  arm(lastLine?: string): void {
     this.suppressing = true;
     this.buffer = '';
+    this.lastLine = lastLine;
+    this.trailingEcho = undefined;
   }
 
   /**
@@ -280,20 +289,43 @@ export class EchoGate {
    * ошибочно уходят в fallback детектора).
    */
   filter(pieces: string[], markCount: number): string[] {
-    if (!this.suppressing) return pieces;
+    if (!this.suppressing) return this.trailingEcho ? this.stripTrailing(pieces, markCount) : pieces;
     if (markCount === 0) {
       this.buffer += pieces.join('');
       return pieces.map(() => '');
     }
     this.suppressing = false;
     this.buffer = '';
-    return pieces.map((p, i) => (i === 0 ? '\r\x1b[K' : p));
+    this.trailingEcho = this.lastLine;
+    const cleared = pieces.map((p, i) => (i === 0 ? '\r\x1b[K' : p));
+    return this.trailingEcho ? this.stripTrailing(cleared, markCount, 1) : cleared;
+  }
+
+  /** Вырезает эхо последней строки настройки (заменяя его стиранием строки, чтобы
+   *  приглашение не задвоилось). Конец поиска — следующий маркер: эхо финального
+   *  вызова всегда предшествует его выполнению.
+   *  ponytail: эхо, разрезанное между чанками, не находится и показывается как есть —
+   *  хвост не придерживаем: без таймера сброса он пропал бы с экрана до следующего
+   *  вывода. Точнее — только с таймером в ShellIntegrationSession. */
+  private stripTrailing(pieces: string[], markCount: number, from = 0): string[] {
+    return pieces.map((piece, i) => {
+      const echo = this.trailingEcho;
+      if (!echo || i < from) return piece;
+      const idx = piece.indexOf(echo);
+      if (idx !== -1) {
+        this.trailingEcho = undefined;
+        return piece.slice(0, idx) + '\r\x1b[K' + piece.slice(idx + echo.length).replace(/^\r?\n/, '');
+      }
+      if (i < markCount) this.trailingEcho = undefined;
+      return piece;
+    });
   }
 
   /** Аварийный сброс по таймауту: вернуть накопленное, выключить подавление. */
   flush(): string {
     const buffered = this.buffer;
     this.buffer = '';
+    this.trailingEcho = undefined;
     this.suppressing = false;
     return buffered;
   }
