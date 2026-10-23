@@ -13,7 +13,8 @@ import {
   isShellEscalationCommand,
   matchesPasswordPromptPattern,
   shellIntegrationSetup,
-  stripTerminalControls
+  stripTerminalControls,
+  undoWrapRedraw
 } from './shellIntegration';
 
 /**
@@ -452,7 +453,10 @@ export class ShellIntegrationSession {
    *  в них nonce сессии. Остальной вывод (MOTD, ошибка шелла) остаётся. */
   private withoutSetupEcho(buffered: string): string {
     const lines = buffered.split(/(?<=\n)/);
-    const kept = lines.filter((l) => !l.includes(this.nonce) && !l.includes('__lucidssh_mark'));
+    const kept = lines.filter((l) => {
+      const plain = undoWrapRedraw(l);
+      return !plain.includes(this.nonce) && !plain.includes('__lucidssh_mark');
+    });
     // Стираем приглашение, к которому приклеилось эхо первой строки.
     return kept.length === lines.length ? buffered : '\r\x1b[K' + kept.join('');
   }
