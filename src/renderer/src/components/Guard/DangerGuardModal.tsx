@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { DangerousCommandPrompt } from '@shared/guard';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
-import { showControlChars } from '@shared/guard';
+import { ControlText } from './ControlText';
 
 /**
  * Модалка Стража (GUARD-02, GUARD-03; скриншот 05-Danger).
@@ -81,7 +81,7 @@ export function DangerGuardModal({
 
         <div className="px-[18px] pb-[18px]">
           <div className="rounded-[4px] border border-danger/30 bg-bg-panel px-3 py-[10px] font-mono text-[13px] break-all text-danger-text">
-            {showControlChars(prompt.command)}
+            <ControlText text={prompt.command} />
           </div>
 
           <p className="mt-[14px] text-[13px] leading-[1.55] text-text-body">{explanation}</p>
@@ -100,7 +100,7 @@ export function DangerGuardModal({
                         item === prompt.target ? 'text-text-strong' : 'text-text-body'
                       }`}
                     >
-                      {showControlChars(item)}
+                      <ControlText text={item} />
                     </li>
                   ))}
                 </ul>
@@ -108,7 +108,7 @@ export function DangerGuardModal({
             ) : (
               <>
                 <span className="text-text-muted">{t('guard.targetLabel')}</span>{' '}
-                <span className="font-mono text-text-strong">{showControlChars(prompt.target)}</span>
+                <span className="font-mono text-text-strong"><ControlText text={prompt.target} /></span>
               </>
             )}
           </div>

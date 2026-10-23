@@ -358,6 +358,7 @@
     "title": "Paste multiple lines",
     "body": "You are pasting {{count}} lines. Review the text before sending it to the server — it will run as is.",
     "dangerNote": "Warning: some lines look like dangerous commands (highlighted).",
+    "controlNote": "The text contains hidden control characters — shown as symbols in yellow boxes (for example, ␁ is Ctrl+A). They change what the server will run.",
     "confirm": "Paste and run",
     "cancel": "Cancel"
   },
