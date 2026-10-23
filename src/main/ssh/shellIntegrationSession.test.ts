@@ -1024,3 +1024,61 @@ describe('ShellIntegrationSession — многострочная сырая вс
     expect(crumbs(box.feed(prompt()))).toEqual([true]);
   });
 });
+
+describe('ShellIntegrationSession — эхо настройки на экране (тикет 28)', () => {
+  const lines = SETUP.slice(0, -1).split('\n');
+  const shown = (r: ShellIntegrationResult): string => r.display;
+
+  it('рабочая интеграция: эхо третьей строки после первого маркера не показывается', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    box.feed('Welcome\r\n');
+    box.tick('setup-silence');
+    let screen = '';
+    // bash: эхо строк 1–2, хук ставится второй строкой — маркер до эха строки 3
+    screen += shown(box.feed(`${lines[0]}\r\n${lines[1]}\r\n`));
+    screen += shown(box.feed(`${mk('u', 'h', '/home/u', '1000')}$ `));
+    screen += shown(box.feed(`${lines[2]}\r\n`));
+    screen += shown(box.feed(`${mk('u', 'h', '/home/u', '1000')}$ `));
+    expect(screen).not.toContain('__lucidssh_mark');
+    expect(screen).not.toContain(NONCE);
+    expect(screen.endsWith('$ ')).toBe(true);
+  });
+
+  it('хвост чанка, похожий на начало эха, показывается сразу, а не придерживается', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    box.tick('setup-silence');
+    box.feed(`${lines[0]}\r\n${lines[1]}\r\n${mk('u', 'h', '/home/u', '1000')}`);
+    // ничего больше не придёт: текст не должен зависнуть в гейте
+    expect(shown(box.feed('$ case '))).toBe('$ case ');
+    expect(box.tick('echo-flush').display).toBe('');
+  });
+
+  it('эхо третьей строки, разрезанное между чанками, не теряет вывод', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    box.tick('setup-silence');
+    box.feed(`${lines[0]}\r\n${lines[1]}\r\n${mk('u', 'h', '/home/u', '1000')}$ `);
+    const half = Math.floor(lines[2]!.length / 2);
+    const screen = shown(box.feed(lines[2]!.slice(0, half))) + shown(box.feed(lines[2]!.slice(half)));
+    // известный предел: такое эхо видно, но каждый байт дошёл до экрана
+    expect(screen).toBe(lines[2]);
+  });
+
+  it('вывод, пришедший вместе с эхом, не теряется', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    box.tick('setup-silence');
+    box.feed(`${lines[0]}\r\n${lines[1]}\r\n${mk('u', 'h', '/home/u', '1000')}`);
+    const screen = shown(box.feed(`Last login: today\r\n$ ${lines[2]}\r\n${mk('u', 'h', '/home/u', '1000')}$ `));
+    expect(screen).toContain('Last login: today');
+    expect(screen).not.toContain('__lucidssh_mark');
+  });
+
+  it('без подтверждения: echo-flush не показывает строки с nonce, но показывает остальной вывод', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    box.tick('setup-silence');
+    box.feed(`$ ${lines[0]}\r\n${lines[1]}\r\n${lines[2]}\r\nksh: real error\r\n$ `);
+    const flushed = box.tick('echo-flush').display;
+    expect(flushed).not.toContain(NONCE);
+    expect(flushed).not.toContain('__lucidssh_mark');
+    expect(flushed).toContain('ksh: real error');
+  });
+});
