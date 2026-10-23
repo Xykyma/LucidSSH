@@ -263,8 +263,8 @@ export class EchoGate {
   /** Тикет 28: эхо последней строки настройки, ещё не вырезанное после первого
    *  маркера. Хук ставит предыдущая строка — маркер приходит до того, как
    *  readline допечатает эхо финального вызова. */
-  private trailingEcho: string | undefined;
-  private lastLine: string | undefined;
+  private trailingEcho: RegExp | undefined;
+  private lastLine: RegExp | undefined;
 
   get active(): boolean {
     return this.suppressing;
@@ -275,7 +275,7 @@ export class EchoGate {
   arm(lastLine?: string): void {
     this.suppressing = true;
     this.buffer = '';
-    this.lastLine = lastLine;
+    this.lastLine = lastLine === undefined ? undefined : wrapTolerant(lastLine);
     this.trailingEcho = undefined;
   }
 
@@ -311,10 +311,10 @@ export class EchoGate {
     return pieces.map((piece, i) => {
       const echo = this.trailingEcho;
       if (!echo || i < from) return piece;
-      const idx = piece.indexOf(echo);
-      if (idx !== -1) {
+      const m = echo.exec(piece);
+      if (m) {
         this.trailingEcho = undefined;
-        return piece.slice(0, idx) + '\r\x1b[K' + piece.slice(idx + echo.length).replace(/^\r?\n/, '');
+        return piece.slice(0, m.index) + '\r\x1b[K' + piece.slice(m.index + m[0].length).replace(/^\r?\n/, '');
       }
       if (i < markCount) this.trailingEcho = undefined;
       return piece;
@@ -330,6 +330,17 @@ export class EchoGate {
     return buffered;
   }
 }
+
+/** Readline на границе строки терминала печатает последний символ, \r и тот же
+ *  символ снова (`__l\rlucidssh`): эхо длинной строки в узком окне приходит с такими
+ *  вставками. Регулярное выражение для `text`, допускающее их после каждого символа. */
+function wrapTolerant(text: string): RegExp {
+  const esc = (c: string): string => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp([...text].map((c) => `${esc(c)}(?:\\r${esc(c)})?`).join(''));
+}
+
+/** Убирает вставки переноса из `wrapTolerant`: `X\rX` → `X`. */
+export const undoWrapRedraw = (text: string): string => text.replace(/(.)\r\1/g, '$1');
 
 /**
  * Гейт «команда действительно выполнялась» (баг: детектор переоткрывается сам).

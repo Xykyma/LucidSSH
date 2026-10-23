@@ -1082,3 +1082,31 @@ describe('ShellIntegrationSession — эхо настройки на экран�
     expect(flushed).toContain('ksh: real error');
   });
 });
+
+describe('ShellIntegrationSession — эхо настройки в узком окне (тикет 28, живая проверка)', () => {
+  const setupLines = SETUP.slice(0, -1).split('\n');
+  /** Readline на границе строки терминала: символ, \r, тот же символ снова. */
+  const wrapAt = (line: string, col: number): string => `${line.slice(0, col)}\r${line.slice(col - 1)}`;
+
+  it('эхо третьей строки с переносом readline вырезается', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    box.tick('setup-silence');
+    box.feed(`${setupLines[0]}\r\n${setupLines[1]}\r\n${mk('u', 'h', '/home/u', '1000')}`);
+    let screen = box.feed('$ ').display;
+    screen += box.feed(`${wrapAt(setupLines[2]!, 55)}\r\n`).display;
+    screen += box.feed(mk('u', 'h', '/home/u', '1000')).display;
+    expect(screen).not.toContain('lucidssh_mark');
+    expect(screen).not.toContain('esac');
+  });
+
+  it('без подтверждения: строки с nonce и переносом readline внутри не показываются', () => {
+    const box = new ShellIntegrationSession(NONCE);
+    box.tick('setup-silence');
+    const wrapped = wrapAt(setupLines[0]!, setupLines[0]!.indexOf(NONCE) + 7);
+    box.feed(`$ ${wrapped}\r\n${wrapAt(setupLines[2]!, 55)}\r\nksh: real error\r\n$ `);
+    const flushed = box.tick('echo-flush').display;
+    expect(flushed.replace(/\r/g, '')).not.toContain(NONCE.slice(0, 20));
+    expect(flushed).not.toContain('lucidssh_mark');
+    expect(flushed).toContain('ksh: real error');
+  });
+});
