@@ -356,9 +356,9 @@ interface ErrorPattern {
 
 permission denied, no such file or directory, command not found, connection refused, disk full, out of memory, segmentation fault, syntax error; SSH: Connection refused, Permission denied (publickey), Host key verification failed, Connection timed out.
 
-### 4.6 Extension point for 1.2
+### 4.6 Extension point for local AI explanations
 
-The detector returns a result shaped like `{ matched: true, explanation: ErrorExplanation } | { matched: false, fallback: FallbackRef }` (`DetectResult`, `src/main/errors/detector.ts`). In 1.0, `fallback` leads to the generic template / documentation search (ERR-06). In 1.2, the same `fallback` will route to a local LLM (spec §12.13). The detector's contract doesn't need to change for that.
+The detector returns a result shaped like `{ matched: true, explanation: ErrorExplanation } | { matched: false, fallback: FallbackRef }` (`DetectResult`, `src/main/errors/detector.ts`). In 1.0, `fallback` leads to the generic template / documentation search (ERR-06). In a future version with local AI explanations, the same `fallback` will route to a local LLM (spec §12.13). The detector's contract doesn't need to change for that.
 
 ```ts
 interface FallbackRef {
@@ -724,7 +724,7 @@ interface ErrorExplanation {
   title: string;
   explanation: string;
   checks: ErrorCheck[];
-  source: 'database' | 'fallback';        // 'llm' will be added in 1.2
+  source: 'database' | 'fallback';        // 'llm' will be added with local AI explanations
 }
 
 interface HistoryQuery {
@@ -781,7 +781,7 @@ OpenSSH format (`known_hosts`), managed in main. On first connection, an entry i
 2. Key paths are stored as a reference to the original; the key is never copied (SEC-02).
 3. Any string coming from the server (stderr, breadcrumb, metrics, man/--help) is untrusted input: parsed as data, never executed, masked for secrets before being saved/logged.
 4. The built-in databases' versions (`errors.core.json`, `commands.core.json`) are checked against the app version; their update strategy is OQ-06.
-5. Extension points for 1.2 (`FallbackRef.kind`, `ErrorExplanation.source`) are in place, but the LLM implementation is absent in 1.0.
+5. Extension points for local AI explanations (`FallbackRef.kind`, `ErrorExplanation.source`) are in place, but the LLM implementation is absent in 1.0.
 6. Denormalizing `host_name`/`username` into history is intentional: the entry stays readable after the host is deleted.
 
 *— end of document —*
