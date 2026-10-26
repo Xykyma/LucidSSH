@@ -46,7 +46,7 @@ const mockLoadPrivateKey = vi.mocked(loadPrivateKey);
  *  тестов сама сверка отпечатка не интересна. Тесты, которым важен именно
  *  промпт, переопределяют мок точечно. */
 function autoAcceptHostKey(): void {
-  mockRequestHostKeyDecision.mockImplementation(({ verify }: RequestHostKeyDecisionParams) => verify(true));
+  mockRequestHostKeyDecision.mockImplementation(({ verify }: RequestHostKeyDecisionParams) => void verify(true));
 }
 
 const fakeConfig = (): AppConfig =>
@@ -268,7 +268,7 @@ describe('testConnection', () => {
   it('отпечаток bastion незнакомый и отклонён пользователем — отказ до аутентификации, пароль не уходит', async () => {
     mockGetHost.mockReturnValue(fakeBastion());
     mockGetSecretForConnection.mockResolvedValue('bastion-secret');
-    mockRequestHostKeyDecision.mockImplementation(({ verify }) => verify(false));
+    mockRequestHostKeyDecision.mockImplementation(({ verify }) => void verify(false));
 
     const { client, connect, emit } = makeFakeClient();
     __setConnectionFactoryForTest(() => client);
@@ -341,7 +341,7 @@ describe('testConnection', () => {
   });
 
   it('целевой хост: отпечаток отклонён — свой errorKey, не про jump', async () => {
-    mockRequestHostKeyDecision.mockImplementation(({ verify }) => verify(false));
+    mockRequestHostKeyDecision.mockImplementation(({ verify }) => void verify(false));
 
     const { client, connect, emit } = makeFakeClient();
     __setConnectionFactoryForTest(() => client);

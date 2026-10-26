@@ -5,6 +5,7 @@ import type { Breadcrumb } from '@shared/breadcrumb';
 import type { DashboardAlert, DashboardAlertIssue, DashboardMetrics } from '@shared/dashboard';
 import type { ErrorExplanation } from '@shared/content';
 import { parseQuickConnect } from '@shared/quickConnect';
+import { enqueueHostKeyPrompt, removeHostKeyPrompt } from './hostKeyQueue';
 
 /**
  * Стор SSH-сессий: список вкладок, активная сессия, ожидающие подтверждения
@@ -41,6 +42,8 @@ export interface SessionExtras {
 interface SessionsStore {
   sessions: SessionInfo[];
   activeSessionId: string | null;
+  /** Голова очереди промптов отпечатка — показывается в модалке, следующий
+   *  после ответа на текущий (`hostKeyQueue.ts`). */
   hostKeyPrompt: HostKeyPrompt | null;
   sessionExtras: Record<string, SessionExtras>;
   dismissError: (sessionId: string) => void;
@@ -69,7 +72,8 @@ const Ctx = createContext<SessionsStore | null>(null);
 export function SessionsProvider({ children }: { children: ReactNode }): JSX.Element {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [hostKeyPrompt, setHostKeyPrompt] = useState<HostKeyPrompt | null>(null);
+  const [hostKeyQueue, setHostKeyQueue] = useState<HostKeyPrompt[]>([]);
+  const hostKeyPrompt = hostKeyQueue[0] ?? null;
   const [sessionExtras, setSessionExtras] = useState<Record<string, SessionExtras>>({});
   // HM-11: sessionId → детали Quick Connect, ждущие первого connected/disconnected,
   // чтобы один раз предложить «Сохранить как хост?». Не влияет на рендер само по
@@ -119,7 +123,14 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
         }
       }
     );
-    const offPrompt = window.lucidSSH.onHostKeyPrompt(setHostKeyPrompt);
+    const offPrompt = window.lucidSSH.onHostKeyPrompt((prompt) => {
+      setHostKeyQueue((q) => enqueueHostKeyPrompt(q, prompt));
+    });
+    // Соединение промпта умерло до ответа (вкладку закрыли, обрыв сети) —
+    // спрашивать про него больше не о чем.
+    const offPromptCancelled = window.lucidSSH.onHostKeyPromptCancelled((requestId) => {
+      setHostKeyQueue((q) => removeHostKeyPrompt(q, requestId));
+    });
     const offAuthPrompt = window.lucidSSH.onAuthPrompt((prompt) => {
       setExtraField(prompt.sessionId, 'authPrompt', prompt);
     });
@@ -138,6 +149,7 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
     return () => {
       offStatus();
       offPrompt();
+      offPromptCancelled();
       offAuthPrompt();
       offCrumb();
       offDash();
@@ -260,8 +272,10 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
   const answerHostKey = useCallback(
     async (decision: 'accept' | 'reject') => {
       if (!hostKeyPrompt) return;
-      await window.lucidSSH.confirmHostKey(hostKeyPrompt.requestId, decision);
-      setHostKeyPrompt(null);
+      const { requestId } = hostKeyPrompt;
+      await window.lucidSSH.confirmHostKey(requestId, decision);
+      // По id, а не «снять голову»: пока шёл IPC, голова могла смениться.
+      setHostKeyQueue((q) => removeHostKeyPrompt(q, requestId));
     },
     [hostKeyPrompt]
   );

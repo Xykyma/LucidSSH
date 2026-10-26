@@ -137,6 +137,8 @@ export const IPC = {
   evWindowMaximized: 'ev:window-maximized',
   evSessionStatus: 'ev:session-status',
   evHostKeyPrompt: 'ev:host-key-prompt',
+  /** Соединение промпта умерло до ответа — снять его из очереди модалок. */
+  evHostKeyPromptCancelled: 'ev:host-key-prompt-cancelled',
   evAuthPrompt: 'ev:auth-prompt',
   evConnectionLog: 'ev:connection-log',
   evTerminalData: 'ev:terminal-data',
@@ -174,6 +176,7 @@ export type RendererEvents = {
   [IPC.evWindowMaximized]: [maximized: boolean];
   [IPC.evSessionStatus]: [sessionId: string, status: SessionStatus];
   [IPC.evHostKeyPrompt]: [prompt: HostKeyPrompt];
+  [IPC.evHostKeyPromptCancelled]: [requestId: string];
   [IPC.evAuthPrompt]: [prompt: AuthPromptRequest];
   [IPC.evConnectionLog]: [sessionId: string, entry: ConnectionLogEntry];
   [IPC.evTerminalData]: [sessionId: string, data: string];

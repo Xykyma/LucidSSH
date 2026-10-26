@@ -302,13 +302,15 @@ describe('закрытие вкладки во время промпта отп�
     __setConnectionFactoryForTest(null);
   });
 
-  it('destroySession во время промпта убивает Client; «Принять» в оставшейся модалке не подключает и не шлёт пароль', async () => {
+  it('destroySession во время промпта убивает Client и снимает промпт; запоздалое «Принять» не пишет ключ и не шлёт пароль', async () => {
     const sentPrompts: HostKeyPrompt[] = [];
+    const cancelledPrompts: string[] = [];
     mockGetMainWindow.mockReturnValue({
       isDestroyed: () => false,
       webContents: {
-        send: vi.fn((channel: string, payload: HostKeyPrompt) => {
-          if (channel === IPC.evHostKeyPrompt) sentPrompts.push(payload);
+        send: vi.fn((channel: string, payload: HostKeyPrompt | string) => {
+          if (channel === IPC.evHostKeyPrompt) sentPrompts.push(payload as HostKeyPrompt);
+          if (channel === IPC.evHostKeyPromptCancelled) cancelledPrompts.push(payload as string);
         })
       }
     } as unknown as ReturnType<typeof getMainWindow>);
@@ -340,13 +342,14 @@ describe('закрытие вкладки во время промпта отп�
     emit('close');
 
     expect(listSessions().find((s) => s.sessionId === sessionId)).toBeUndefined();
+    // Модалку про мёртвую вкладку renderer снимает из очереди
+    // (`.scratch/hostkey-prompt-queue/spec.md`, пересматривает ADR-0017).
+    expect(cancelledPrompts).toEqual([requestId]);
 
+    // Ответ, разминувшийся с закрытием по IPC, — no-op: решение уже снято.
     applyHostKeyDecision(requestId, 'accept');
 
-    // Ключ запомнен — это факт о сервере, сверенный пользователем, а не о
-    // вкладке (ADR-0017, «Решение по ключу переживает своё Соединение»).
-    expect(mockAddKnownKey).toHaveBeenCalledWith('10.0.0.5', 22, expect.any(String), expect.any(Buffer));
-    // Но в уже мёртвый Client решение не доходит — ни рукопожатия, ни пароля.
+    expect(mockAddKnownKey).not.toHaveBeenCalled();
     expect(verifySpy).not.toHaveBeenCalled();
     expect(mockStartDashboard).not.toHaveBeenCalled();
   });
