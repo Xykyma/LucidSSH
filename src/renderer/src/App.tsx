@@ -168,6 +168,9 @@ function AppBody(): JSX.Element {
       {helpOpen && <HelpScreen />}
       {hostKeyPrompt && (
         <FingerprintModal
+          // key: свежий экземпляр на каждый промпт очереди — иначе флажок
+          // «я сверил отпечаток» (SSH-04) переехал бы на следующий промпт.
+          key={hostKeyPrompt.requestId}
           prompt={hostKeyPrompt}
           onAnswer={(decision) => void answerHostKey(decision)}
         />

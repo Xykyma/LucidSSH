@@ -58,9 +58,11 @@ const pending = new Map<string, PendingDecision>();
  * Запросить решение по ключу, предъявленному сервером. Совпал с уже известным —
  * отвечает синхронно, без промпта и без записи. Иначе заводит запись в
  * `pending`, шлёт `evHostKeyPrompt` в renderer и ждёт `applyHostKeyDecision`
- * (accept/reject/таймаут).
+ * (accept/reject/таймаут). Возвращает `requestId` поднятого промпта — чтобы
+ * умершее до ответа Соединение могло его снять (`cancelHostKeyDecision`);
+ * совпавший ключ промпта не поднимает — `undefined`.
  */
-export function requestHostKeyDecision(params: RequestHostKeyDecisionParams): void {
+export function requestHostKeyDecision(params: RequestHostKeyDecisionParams): string | undefined {
   const { hostName, address, port, rawKey, verify, logger, purpose } = params;
   const keyType = keyTypeFromBlob(rawKey);
   const fingerprint = sha256Fingerprint(rawKey);
@@ -74,7 +76,7 @@ export function requestHostKeyDecision(params: RequestHostKeyDecisionParams): vo
   if (known.some((k) => k.keyBase64 === presented)) {
     logger?.('info', 'clog.hostkeyKnown');
     verify(true);
-    return;
+    return undefined;
   }
 
   const isChanged = known.length > 0;
@@ -116,6 +118,20 @@ export function requestHostKeyDecision(params: RequestHostKeyDecisionParams): vo
     purpose
   };
   emit(IPC.evHostKeyPrompt, prompt);
+  return requestId;
+}
+
+/** Снять решение, чьё Соединение умерло до ответа (закрыли вкладку, обрыв
+ *  сети, `readyTimeout`): без записи в known_hosts и без `verify` — спрашивать
+ *  больше не о чем, renderer убирает промпт из очереди модалок
+ *  (`.scratch/hostkey-prompt-queue/spec.md`). Уже отвеченный/неизвестный
+ *  `requestId` — no-op, события нет. */
+export function cancelHostKeyDecision(requestId: string): void {
+  const p = pending.get(requestId);
+  if (!p) return;
+  pending.delete(requestId);
+  clearTimeout(p.timeout);
+  emit(IPC.evHostKeyPromptCancelled, requestId);
 }
 
 /** Применить решение пользователя (SSH-03/04). Неизвестный/просроченный

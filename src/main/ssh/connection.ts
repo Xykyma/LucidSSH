@@ -1,7 +1,12 @@
 import { Client, type ClientChannel } from 'ssh2';
 import type { ConnectionPurpose } from '@shared/ssh';
 import { loadConfig } from '../config/store';
-import { requestHostKeyDecision, HOSTKEY_DECISION_TIMEOUT_MS, type HostKeyDecisionLogger } from './hostKeyDecision';
+import {
+  cancelHostKeyDecision,
+  requestHostKeyDecision,
+  HOSTKEY_DECISION_TIMEOUT_MS,
+  type HostKeyDecisionLogger
+} from './hostKeyDecision';
 import { preferredHostKeyAlgorithms } from './knownHosts';
 
 /**
@@ -91,10 +96,11 @@ export function classifyConnectionError(err: Error & { level?: string }): Connec
  * `ready`; провал — только на `close` (к этому моменту Соединение
  * гарантированно мертво).
  *
- * Решение по ключу переживает своё Соединение: `hostVerifier` всегда
- * уходит в `requestHostKeyDecision`, но `verify`, дошедший ПОСЛЕ `close`
- * этого Соединения, в ssh2 не передаётся — known_hosts решение при этом
- * не трогает (пишет независимо от Client, см. `hostKeyDecision.ts`).
+ * `hostVerifier` всегда уходит в `requestHostKeyDecision`. Решение, не
+ * отвеченное к `close` этого Соединения, снимается (`cancelHostKeyDecision`):
+ * спрашивать про мёртвую вкладку не о чем, known_hosts не трогается
+ * (`.scratch/hostkey-prompt-queue/spec.md`). `verify`, дошедший после
+ * `close` (гонка ответа с закрытием), в ssh2 не передаётся.
  */
 export function openConnection(
   target: ConnectionTarget,
@@ -109,6 +115,7 @@ export function openConnection(
   let connectionClosed = false;
   let sawAuthError = false;
   let firstErrorCategory: ConnectionErrorCategory | undefined;
+  let hostKeyRequestId: string | undefined;
 
   const outcome = new Promise<ConnectionOutcome>((resolve) => {
     const settle = (o: ConnectionOutcome): void => {
@@ -147,6 +154,8 @@ export function openConnection(
 
     connection.on('close', () => {
       connectionClosed = true;
+      // Уже отвеченное решение модуль игнорирует — снимать безусловно.
+      if (hostKeyRequestId) cancelHostKeyDecision(hostKeyRequestId);
       // Приоритет причины провала (решение 8 спеки): отказ по ключу — самая
       // информативная причина, даже если ssh2 следом сообщил обычную ошибку
       // соединения (level 'handshake', неотличимую от сетевой); дальше — была
@@ -172,7 +181,7 @@ export function openConnection(
       keepaliveCountMax: 3,
       tryKeyboard: true,
       hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
-        requestHostKeyDecision({
+        hostKeyRequestId = requestHostKeyDecision({
           hostName: target.name,
           address: target.address,
           port: target.port,
@@ -181,10 +190,9 @@ export function openConnection(
           logger: options.logger,
           verify: (valid) => {
             if (!valid) hostkeyRejected = true;
-            // Соединение уже закрыто — запоздалое решение пользователя
-            // (закрытие вкладки во время промпта, затем «Принять» в оставшейся
-            // модалке) до ssh2 доводить незачем: known_hosts обновляется
-            // независимо от Соединения, а отправка пароля в мёртвый сокет — нет.
+            // Соединение уже закрыто — ответ пользователя разминулся с `close`
+            // (промпт снимается на `close`, но ответ мог быть уже в пути по IPC):
+            // отправлять пароль в мёртвый сокет незачем.
             if (connectionClosed) return;
             verify(valid);
           }

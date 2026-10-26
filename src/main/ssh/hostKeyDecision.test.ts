@@ -14,7 +14,12 @@ import { IPC } from '@shared/ipc';
 import type { HostKeyPrompt } from '@shared/ssh';
 import { emit } from '../ipc/events';
 import { sha256Fingerprint } from './knownHosts';
-import { applyHostKeyDecision, HOSTKEY_DECISION_TIMEOUT_MS, requestHostKeyDecision } from './hostKeyDecision';
+import {
+  applyHostKeyDecision,
+  cancelHostKeyDecision,
+  HOSTKEY_DECISION_TIMEOUT_MS,
+  requestHostKeyDecision
+} from './hostKeyDecision';
 
 const mockEmit = vi.mocked(emit);
 
@@ -182,6 +187,36 @@ describe('hostKeyDecision', () => {
     expect(verify).toHaveBeenCalledWith(true);
     expect(mockEmit).not.toHaveBeenCalled();
     expect(knownHostsLines()).toEqual(before);
+  });
+
+  it('отмена (Соединение умерло до ответа) → verify не вызван, known_hosts не тронут, промпт снят в renderer', () => {
+    vi.useFakeTimers();
+    writeKnownHosts([line('10.0.0.5', 'ssh-ed25519', ed25519)]);
+
+    const verify = request(keyBlob('ssh-ed25519', 'forged'));
+    const { requestId } = lastPrompt();
+    cancelHostKeyDecision(requestId);
+
+    expect(mockEmit).toHaveBeenLastCalledWith(IPC.evHostKeyPromptCancelled, requestId);
+
+    // Таймер снят, запоздалый ответ из оставшейся модалки — no-op.
+    vi.advanceTimersByTime(HOSTKEY_DECISION_TIMEOUT_MS);
+    applyHostKeyDecision(requestId, 'accept');
+
+    expect(verify).not.toHaveBeenCalled();
+    expect(knownHostsLines()).toEqual([line('10.0.0.5', 'ssh-ed25519', ed25519)]);
+  });
+
+  it('отмена уже отвеченного решения → no-op, повторного события в renderer нет', () => {
+    const verify = request(ed25519);
+    const { requestId } = lastPrompt();
+    applyHostKeyDecision(requestId, 'accept');
+    mockEmit.mockClear();
+
+    cancelHostKeyDecision(requestId);
+
+    expect(mockEmit).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledTimes(1);
   });
 
   it('неизвестный или просроченный requestId → no-op, не бросает', () => {

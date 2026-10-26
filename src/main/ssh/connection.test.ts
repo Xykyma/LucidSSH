@@ -5,19 +5,21 @@ import type { AppConfig } from '@shared/config';
 // моментом verify() независимо от промпта (PR-2 спеки, `.scratch/open-connection/spec.md`).
 vi.mock('./hostKeyDecision', () => ({
   requestHostKeyDecision: vi.fn(),
+  cancelHostKeyDecision: vi.fn(),
   HOSTKEY_DECISION_TIMEOUT_MS: 300_000
 }));
 vi.mock('./knownHosts', () => ({ preferredHostKeyAlgorithms: vi.fn((): string[] => []) }));
 vi.mock('../config/store', () => ({ loadConfig: vi.fn() }));
 
 import { loadConfig } from '../config/store';
-import { requestHostKeyDecision, type RequestHostKeyDecisionParams } from './hostKeyDecision';
+import { cancelHostKeyDecision, requestHostKeyDecision, type RequestHostKeyDecisionParams } from './hostKeyDecision';
 import { preferredHostKeyAlgorithms } from './knownHosts';
 import { openConnection, __setConnectionFactoryForTest, type ConnectionTarget } from './connection';
 import { makeFakeConnection } from './fakeConnection';
 
 const mockLoadConfig = vi.mocked(loadConfig);
 const mockRequestHostKeyDecision = vi.mocked(requestHostKeyDecision);
+const mockCancelHostKeyDecision = vi.mocked(cancelHostKeyDecision);
 const mockPreferredHostKeyAlgorithms = vi.mocked(preferredHostKeyAlgorithms);
 
 const fakeConfig = (): AppConfig =>
@@ -35,7 +37,7 @@ const target: ConnectionTarget = {
 /** По умолчанию решение принимается немедленно как «ключ совпал» — большинству
  *  тестов сама сверка отпечатка не интересна. */
 function autoAcceptHostKey(): void {
-  mockRequestHostKeyDecision.mockImplementation(({ verify }: RequestHostKeyDecisionParams) => verify(true));
+  mockRequestHostKeyDecision.mockImplementation(({ verify }: RequestHostKeyDecisionParams) => void verify(true));
 }
 
 describe('openConnection', () => {
@@ -134,7 +136,7 @@ describe('openConnection', () => {
   });
 
   it('отказ по ключу (reject) → hostkey-rejected, приоритет над последующей error/close', async () => {
-    mockRequestHostKeyDecision.mockImplementation(({ verify }) => verify(false));
+    mockRequestHostKeyDecision.mockImplementation(({ verify }) => void verify(false));
     const { connection, emit } = makeFakeConnection();
     __setConnectionFactoryForTest(() => connection);
 
@@ -249,6 +251,28 @@ describe('openConnection', () => {
 
     capturedVerify!(true);
     expect(verifySpy).not.toHaveBeenCalled();
+  });
+
+  it('close до ответа на промпт → решение снято (cancelHostKeyDecision с его requestId)', async () => {
+    mockRequestHostKeyDecision.mockImplementation(() => 'req-1');
+    const { connection, emit } = makeFakeConnection();
+    __setConnectionFactoryForTest(() => connection);
+
+    const { connection: handle, outcome } = openConnection(
+      target,
+      { kind: 'password', password: 'pw' },
+      { purpose: 'session' }
+    );
+    const connectConfig = vi.mocked(handle.connect).mock.calls[0]?.[0] as unknown as {
+      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => void;
+    };
+    connectConfig.hostVerifier(Buffer.from('key'), vi.fn());
+    expect(mockCancelHostKeyDecision).not.toHaveBeenCalled();
+
+    emit('close');
+    await outcome;
+
+    expect(mockCancelHostKeyDecision).toHaveBeenCalledWith('req-1');
   });
 
   it('пустой пароль не попадает в connect', () => {

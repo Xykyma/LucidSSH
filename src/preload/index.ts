@@ -180,6 +180,8 @@ const api = {
     subscribe(IPC.evSessionStatus, cb),
   onHostKeyPrompt: (cb: (prompt: HostKeyPrompt) => void): (() => void) =>
     subscribe(IPC.evHostKeyPrompt, cb),
+  onHostKeyPromptCancelled: (cb: (requestId: string) => void): (() => void) =>
+    subscribe(IPC.evHostKeyPromptCancelled, cb),
   onAuthPrompt: (cb: (prompt: AuthPromptRequest) => void): (() => void) =>
     subscribe(IPC.evAuthPrompt, cb),
   onConnectionLog: (cb: (sessionId: string, entry: ConnectionLogEntry) => void): (() => void) =>
