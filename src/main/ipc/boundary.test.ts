@@ -915,7 +915,54 @@ describe('пункт 6 — hostCreate/hostUpdate не пишут при отка
     });
   });
 
+  describe('hosts:create — keychain недоступен', () => {
+    const mockDeleteHost = vi.mocked(hostsRepositoryModule.deleteHost);
+
+    it('setSecret падает — канал отклоняется, созданная строка удалена', async () => {
+      mockCreateHost.mockReturnValue(42);
+      mockSetSecret.mockRejectedValueOnce(new Error('no keychain'));
+
+      const result = await invoke(IPC.hostCreate, mainEvent(), validHostInput(), 's3cr3t');
+
+      expect(result.ok).toBe(false);
+      expect(mockDeleteHost).toHaveBeenCalledWith(42);
+    });
+
+    it('падение, затем успех — в базе ровно один хост', async () => {
+      const db = new Set<number>();
+      let nextId = 1;
+      // Once, не постоянные: beforeEach чистит только историю вызовов, не реализации.
+      const create = (): number => {
+        db.add(nextId);
+        return nextId++;
+      };
+      mockCreateHost.mockImplementationOnce(create).mockImplementationOnce(create);
+      mockDeleteHost.mockImplementationOnce((id: number) => {
+        db.delete(id);
+      });
+      mockSetSecret.mockRejectedValueOnce(new Error('no keychain'));
+
+      const first = await invoke(IPC.hostCreate, mainEvent(), validHostInput(), 's3cr3t');
+      const second = await invoke(IPC.hostCreate, mainEvent(), validHostInput(), 's3cr3t');
+
+      expect(first.ok).toBe(false);
+      expect(second.ok).toBe(true);
+      expect([...db]).toEqual([2]);
+      expect(mockSetSecret).toHaveBeenLastCalledWith(2, 's3cr3t');
+    });
+  });
+
   describe('hosts:update', () => {
+    it('смена authMethod, setSecret падает — updateHost не вызван, строка прежняя', async () => {
+      mockGetHost.mockReturnValue(fakeHost({ id: 7, authMethod: 'key', keyPath: 'C:\\k\\id' }));
+      mockSetSecret.mockRejectedValueOnce(new Error('no keychain'));
+
+      const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(), 'newpass');
+
+      expect(result.ok).toBe(false);
+      expect(mockUpdateHost).not.toHaveBeenCalled();
+    });
+
     it('хост не найден — отказ, updateHost/setSecret не вызваны', async () => {
       mockGetHost.mockReturnValue(null);
 

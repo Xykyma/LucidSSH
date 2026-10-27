@@ -88,7 +88,16 @@ export function registerHostIpcHandlers(): void {
         if (rejection) throw new IpcValidationError(`proxyJumpHostId: ${rejection}`);
       }
       const id = repo.createHost(input);
-      if (secret !== undefined) await keychain.setSecret(id, secret);
+      if (secret !== undefined) {
+        try {
+          await keychain.setSecret(id, secret);
+        } catch (err) {
+          // Ключ keychain — id хоста, поэтому секрет первым не записать: откатываем
+          // строку, иначе повтор «Сохранить» создаст дубликат без секрета.
+          repo.deleteHost(id);
+          throw err;
+        }
+      }
       return { id };
     }
   );
@@ -116,8 +125,9 @@ export function registerHostIpcHandlers(): void {
       if (secret === undefined && input.authMethod !== existing.authMethod) {
         await keychain.deleteSecret(id);
       }
-      repo.updateHost(id, input);
+      // Новый секрет — до updateHost: если keychain упал, строка хоста осталась прежней.
       if (secret !== undefined) await keychain.setSecret(id, secret);
+      repo.updateHost(id, input);
     }
   );
 
