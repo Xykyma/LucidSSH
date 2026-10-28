@@ -155,12 +155,12 @@ describe('реестр ожидающих дозаписей', () => {
   });
 });
 
-// Живой ssh-keygen.exe: без него (CI не на Windows, песочница) — пропуск.
+// Живой ssh-keygen.exe + askpass-.cmd: только Windows; без него — пропуск.
 const hasKeygen = (await findSshKeygen()) !== null;
 
 afterAll(() => rmSync(fakeHome, { recursive: true, force: true }));
 
-describe.skipIf(!hasKeygen)('applyPassphrase (живой ssh-keygen)', () => {
+describe.skipIf(process.platform !== 'win32' || !hasKeygen)('applyPassphrase (живой ssh-keygen)', () => {
   // Спецсимволы cmd, пробелы по краям и не-ASCII: хелпер askpass — .cmd,
   // любая из них сломала бы наивный `echo %VAR%` или кодировку вывода.
   const PASSPHRASE = '  a&b|c<d>e^f %PATH% !x! "q" пароль 日本  ';

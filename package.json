@@ -4,8 +4,13 @@
   "version": "1.0.3",
   "description": "LucidSSH for Windows — SSH-клиент с защитой от опасных команд и объяснением ошибок",
   "main": "out/main/index.js",
+  "desktopName": "LucidSSH",
+  "homepage": "https://github.com/Xykyma/LucidSSH",
   "private": true,
-  "author": "LucidSSH",
+  "author": {
+    "name": "LucidSSH",
+    "email": "Xykyma@users.noreply.github.com"
+  },
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20"

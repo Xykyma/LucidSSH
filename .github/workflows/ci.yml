@@ -28,3 +28,27 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: sudo apt-get install -y libsecret-1-dev
+      - run: npm ci
+      - run: npm test
+      # Native modules must match the Electron ABI for packaging (CLAUDE.md §9).
+      - run: npm run rebuild:app
+      - run: npm run dist -- --linux --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lucidssh-linux
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/latest-linux.yml
+          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
