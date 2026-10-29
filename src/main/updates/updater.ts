@@ -5,6 +5,7 @@ import { app } from 'electron';
 import { emit } from '../ipc/events';
 import { loadConfig } from '../config/store';
 import { writePreUpdateBackup } from '../history/backups';
+import { isAutoUpdateSupported } from './autoUpdateSupport';
 
 /**
  * Автообновление (UPD-01…04, SEC-06/07). Обновление тянется только с публичного
@@ -20,8 +21,11 @@ const { autoUpdater } = electronUpdater;
 let status: UpdateStatus = {
   state: 'idle',
   notConfigured: true,
+  manualOnly: false,
   currentVersion: '0.0.0'
 };
+
+const manualOnly = (): boolean => app.isPackaged && !isAutoUpdateSupported(process.platform, process.env);
 
 function send(): void {
   emit(IPC.evUpdateStatus, status);
@@ -40,13 +44,14 @@ function parseSource(source: string): { owner: string; repo: string } | null {
 
 /** Фид не настроен: dev-сборка без override источника (в упакованном — app-update.yml). */
 function isNotConfigured(): boolean {
-  return parseSource(loadConfig().updates.source) === null && !app.isPackaged;
+  return !manualOnly() && parseSource(loadConfig().updates.source) === null && !app.isPackaged;
 }
 
 export function initUpdater(): void {
   status = {
     state: 'idle',
     notConfigured: isNotConfigured(),
+    manualOnly: manualOnly(),
     currentVersion: app.getVersion()
   };
 
@@ -83,6 +88,7 @@ export function initUpdater(): void {
  * ручная — всегда. Источник не настроен или dev-сборка → тихий no-op (UPD-01).
  */
 export async function checkForUpdates(manual: boolean): Promise<void> {
+  if (manualOnly()) return; // .deb: обновляется вручную, autoUpdater не зовём
   const cfg = loadConfig();
   const source = parseSource(cfg.updates.source);
   if (source === null && !app.isPackaged) {

@@ -34,5 +34,7 @@ export interface UpdateStatus {
   errorKey?: string;
   /** true, если источник обновлений не настроен (config.updates.source пуст). */
   notConfigured: boolean;
+  /** true для сборки без автообновления (Linux .deb): обновляется вручную через Releases. */
+  manualOnly: boolean;
   currentVersion: string;
 }
