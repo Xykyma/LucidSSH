@@ -49,6 +49,8 @@ function subscribe<K extends keyof RendererEvents>(
 
 const api = {
   // --- Приложение ---
+  // Только чтение, без IPC: платформа не меняется за время жизни процесса.
+  platform: process.platform,
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC.appGetInfo),
   openReleasesPage: (): void => ipcRenderer.send(IPC.appOpenReleasesPage),
   openBugReport: (): void => ipcRenderer.send(IPC.appOpenBugReport),

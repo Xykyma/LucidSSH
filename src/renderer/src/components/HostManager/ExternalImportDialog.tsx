@@ -6,6 +6,7 @@ import { useHosts } from '@/stores/hosts';
 import { Icon } from '@/components/common/Icon';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { isWindows } from '@/hooks/platform';
 
 /**
  * Импорт хостов из внешних источников (HM-03 PuTTY, HM-04 ssh_config).
@@ -16,7 +17,8 @@ import { useEscapeClose } from '@/hooks/useEscapeClose';
 export function ExternalImportDialog({ onClose }: { onClose: () => void }): JSX.Element {
   const { t } = useTranslation();
   const { refresh } = useHosts();
-  const [source, setSource] = useState<ImportSource>('putty');
+  // PuTTY и WinSCP читают реестр Windows — на Linux остаётся один источник.
+  const [source, setSource] = useState<ImportSource>(isWindows ? 'putty' : 'ssh-config');
   const [result, setResult] = useState<ExternalImportResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -156,11 +158,13 @@ export function ExternalImportDialog({ onClose }: { onClose: () => void }): JSX.
           </button>
         </div>
 
-        <div className="mt-2 flex gap-1 border-b border-border-hairline px-5">
-          {tab('putty', t('import.tabPutty'))}
-          {tab('ssh-config', t('import.tabSshConfig'))}
-          {tab('winscp', t('import.tabWinScp'))}
-        </div>
+        {isWindows && (
+          <div className="mt-2 flex gap-1 border-b border-border-hairline px-5">
+            {tab('putty', t('import.tabPutty'))}
+            {tab('ssh-config', t('import.tabSshConfig'))}
+            {tab('winscp', t('import.tabWinScp'))}
+          </div>
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
           {applied ? (

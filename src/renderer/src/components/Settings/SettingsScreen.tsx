@@ -6,6 +6,7 @@ import type { KnownHostView } from '@shared/ssh';
 import type { ImportPreview } from '@shared/hosts';
 import { ImportDialog } from '@/components/HostManager/ImportDialog';
 import { ExternalImportDialog } from '@/components/HostManager/ExternalImportDialog';
+import { isWindows } from '@/hooks/platform';
 import { useConfig, getCurrentConfig } from '@/stores/config';
 import { usePanels } from '@/stores/panels';
 import { useUpdates } from '@/stores/updates';
@@ -484,7 +485,7 @@ function ImportSection(): JSX.Element {
       <SectionTitle>{t('settings.sections.import')}</SectionTitle>
 
       <Card title={t('settings.import.external')}>
-        <div className="mb-2 text-[12px] text-text-muted">{t('settings.import.externalDesc')}</div>
+        <div className="mb-2 text-[12px] text-text-muted">{t(isWindows ? 'settings.import.externalDesc' : 'settings.import.externalDescLinux')}</div>
         <button
           type="button"
           onClick={() => setExtImportOpen(true)}
@@ -942,7 +943,10 @@ function AboutSection({
           <div className="min-w-0 flex-1">
             <div className="text-[16px] font-semibold text-text-primary">LucidSSH</div>
             <div className="mt-[2px] text-[12.5px] text-text-muted">
-              {t('settings.about.versionOs', { version: version || '—' })}
+              {t('settings.about.versionOs', {
+                version: version || '—',
+                os: isWindows ? 'Windows' : 'Linux'
+              })}
             </div>
             <div className="mt-1 text-[12px] text-text-dim">{t('settings.about.tagline')}</div>
           </div>
@@ -1029,19 +1033,21 @@ function AboutSection({
       {/* §9.1 Release_and_Update_Strategy.md: спокойное объяснение отсутствия
           подписи вместо предупреждения в окне первого запуска (BLK-01 закрыт
           решением от 08.07.2026 — сертификат недоступен разработчикам из РФ). */}
-      <div className="flex items-start gap-2 rounded-[8px] border border-border-default bg-bg-panel px-[17px] py-[13px]">
-        <Icon name="shield" size={14} className="mt-[1px] shrink-0 text-text-dim" />
-        <div className="text-[11.5px] leading-[1.5] text-text-dim">
-          {t('settings.about.noSignature')}{' '}
-          <button
-            type="button"
-            onClick={() => window.lucidSSH.openReleasesPage()}
-            className="text-lavender hover:underline"
-          >
-            {t('settings.about.noSignatureLink')}
-          </button>
+      {isWindows && (
+        <div className="flex items-start gap-2 rounded-[8px] border border-border-default bg-bg-panel px-[17px] py-[13px]">
+          <Icon name="shield" size={14} className="mt-[1px] shrink-0 text-text-dim" />
+          <div className="text-[11.5px] leading-[1.5] text-text-dim">
+            {t('settings.about.noSignature')}{' '}
+            <button
+              type="button"
+              onClick={() => window.lucidSSH.openReleasesPage()}
+              className="text-lavender hover:underline"
+            >
+              {t('settings.about.noSignatureLink')}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <ToggleRow
         title={t('settings.updates.autoCheck')}

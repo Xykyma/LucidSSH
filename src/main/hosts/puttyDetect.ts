@@ -14,6 +14,8 @@ const PUTTY_SESSIONS_KEY = 'HKCU\\Software\\SimonTatham\\PuTTY\\Sessions';
 const OUTPUT_KEY_PREFIX = 'HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\';
 
 export function countPuttySessions(): Promise<number> {
+  // В WSL reg.exe находится через PATH Windows и отдаёт чужой реестр.
+  if (process.platform !== 'win32') return Promise.resolve(0);
   return new Promise((resolve) => {
     execFile(
       'reg.exe',
