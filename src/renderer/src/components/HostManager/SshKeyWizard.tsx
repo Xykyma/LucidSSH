@@ -5,6 +5,7 @@ import { PASSPHRASE_MIN } from '@shared/keygen';
 import { Icon } from '@/components/common/Icon';
 import { useBackdropClose } from '@/hooks/useBackdropClose';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { isWindows } from '@/hooks/platform';
 
 /**
  * Мастер создания SSH-ключа (HM-12), открывается из NewConnectionDrawer
@@ -164,19 +165,23 @@ export function SshKeyWizard({
             <div className="text-[13px] font-medium text-text-strong">
               {t('conn.keyWizard.missing.title')}
             </div>
-            <p className={body}>{t('conn.keyWizard.missing.body')}</p>
-            <p className={body}>{t('conn.keyWizard.missing.how')}</p>
+            {isWindows && <p className={body}>{t('conn.keyWizard.missing.body')}</p>}
+            <p className={body}>
+              {t(isWindows ?'conn.keyWizard.missing.how' : 'conn.keyWizard.missing.howLinux')}
+            </p>
             <div className="flex justify-end gap-2 pt-1 pb-1">
               <button type="button" onClick={onClose} className={secondaryBtn}>
                 {t('common.close')}
               </button>
-              <button
-                type="button"
-                onClick={() => window.lucidSSH.keygenOpenInstall()}
-                className={primaryBtn}
-              >
-                {t('conn.keyWizard.missing.open')}
-              </button>
+              {isWindows && (
+                <button
+                  type="button"
+                  onClick={() => window.lucidSSH.keygenOpenInstall()}
+                  className={primaryBtn}
+                >
+                  {t('conn.keyWizard.missing.open')}
+                </button>
+              )}
             </div>
           </div>
         ) : step === 1 ? (

@@ -54,7 +54,7 @@
     },
     "deleteConfirm": {
       "title": "Delete server?",
-      "body": "“{{name}}” will be removed from the list. The saved password will be deleted from Windows Credential Manager.",
+      "body": "“{{name}}” will be removed from the list. The saved password will be deleted from the system password store.",
       "confirm": "Delete"
     },
     "deleteJumpWarning": {
@@ -106,12 +106,12 @@
     "authPassword": "Password",
     "authKey": "Key",
     "password": "Server password",
-    "passwordHelper": "Stored in Windows Credential Manager, not in app files",
+    "passwordHelper": "Stored in the system password store, not in app files",
     "passwordSavedHelper": "Password is saved. Leave empty to keep it",
     "deleteSecret": "Delete saved password",
     "deleteSecretConfirm": {
       "title": "Delete saved password?",
-      "body": "The password will be removed from Windows Credential Manager. You'll need to enter it again next time you connect.",
+      "body": "The password will be removed from the system password store. You'll need to enter it again next time you connect.",
       "confirm": "Delete"
     },
     "keyPath": "Key file",
@@ -133,13 +133,14 @@
         "title": "ssh-keygen was not found on this PC",
         "body": "Creating a key requires the Windows \"OpenSSH Client\" component. It is usually preinstalled, but it could not be found here.",
         "how": "To enable it: Settings → System → Optional features → \"Add a feature\" → \"OpenSSH Client\" → Install. Then reopen this wizard.",
-        "open": "Open Windows features"
+        "open": "Open Windows features",
+        "howLinux": "Install the openssh-client package (for example, sudo apt install openssh-client), then reopen the wizard."
       },
       "pass": {
         "title": "Passphrase — a password for the key file itself",
         "body": "If the key file is stolen, it cannot be used without the passphrase. You will need to enter it when connecting. You can leave it empty — then login will require no typing at all.",
         "placeholder": "At least 5 characters",
-        "helper": "Stored in Windows Credential Manager after saving the host — like passwords",
+        "helper": "Stored in the system password store after saving the host — like passwords",
         "skip": "No passphrase",
         "setAction": "Set passphrase",
         "error": "Could not set the passphrase — the key remains without one. You can continue and set it later with ssh-keygen -p."
@@ -671,6 +672,7 @@
     "import": {
       "external": "Import from external sources",
       "externalDesc": "PuTTY, ~/.ssh/config, WinSCP. The list of sources grows as more programs are supported.",
+      "externalDescLinux": "Hosts from ~/.ssh/config.",
       "externalBtn": "Open import"
     },
     "interface": {
@@ -689,7 +691,7 @@
       "hintConnect": "Connection dialog hints",
       "hintConnectDesc": "Learning notes in the new connection form.",
       "notifications": "Notifications",
-      "systemToasts": "Windows system notifications",
+      "systemToasts": "System notifications",
       "systemToastsDesc": "Toasts on connection loss and long commands finishing when the window is not focused.",
       "longCommand": "Long command threshold",
       "longCommandDesc": "Notify about commands longer than N seconds. 0 disables it.",
@@ -720,8 +722,8 @@
     },
     "about": {
       "version": "Version {{version}}",
-      "versionOs": "Version {{version}} · Windows",
-      "tagline": "A simple SSH client for Windows. Fully local: no account, cloud or telemetry.",
+      "versionOs": "Version {{version}} · {{os}}",
+      "tagline": "A simple SSH client. Fully local: no account, cloud or telemetry.",
       "noSignature": "The app currently ships without a code-signing certificate. Windows may show an \"Unknown publisher\" warning on launch. You can verify the file's authenticity via the SHA-256 checksum on the",
       "noSignatureLink": "release page",
       "reportBug": "Report bug",
@@ -840,6 +842,7 @@
       "item1": "Add a server: click + in the Servers panel and enter address, port and credentials.",
       "item2": "Connect: double-click a server or drag it onto the tabs.",
       "item3": "Work: type commands right in the terminal; the path above is clickable.",
+      "item4": "Passwords are kept in the system password store: Credential Manager on Windows, Secret Service (gnome-keyring or KWallet) on Linux. Without it a password cannot be saved, but connecting with a key or by typing the password still works.",
       "fingerprintTitle": "How to verify a server's fingerprint",
       "fingerprintIntro": "A fingerprint is a short digest of the server's key that confirms you're connecting to your own server, not an impostor.",
       "fingerprintWhereLabel": "Where to look",
@@ -854,7 +857,7 @@
       "quickConnectWay2": "the keyboard shortcut",
       "quickConnectWay3": "the \"connect directly\" link on the no-active-session screen",
       "quickConnectWay4": "just start typing user@host in the server search box — a \"Connect\" item appears as the first result",
-      "quickConnectSaveNote": "This kind of connection isn't saved to the server list. After the session, LucidSSH offers to save the server as a host — accept if you plan to connect again: the password goes into Windows' protected credential store, and the server appears in the list on the left.",
+      "quickConnectSaveNote": "This kind of connection isn't saved to the server list. After the session, LucidSSH offers to save the server as a host — accept if you plan to connect again: the password goes into the system password store, and the server appears in the list on the left.",
       "quickConnectFingerprintNote": "Fingerprint verification works here too: on first connect you'll see the same confirmation prompt as for saved hosts."
     },
     "saved": {

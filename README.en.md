@@ -8,7 +8,7 @@
 
 <p align="center"><a href="README.md">🇷🇺 Русский</a> | 🇬🇧 English</p>
 
-An SSH client for Windows that explains what's happening and stops you from breaking your server by accident.
+An SSH client for Windows (Linux coming soon) that explains what's happening and stops you from breaking your server by accident.
 
 ---
 
@@ -52,7 +52,7 @@ Every command is saved locally with a timestamp, host name, and exit code. You c
 
 ### Fully local
 
-No account, no cloud, no telemetry. Passwords live in Windows Credential Manager. Private keys stay where they already are — the app never copies them into its own directory. The only outbound connections are SSH to your own servers and an HTTPS update check.
+No account, no cloud, no telemetry. Passwords live in the system password store (Windows Credential Manager, Secret Service on Linux). Private keys stay where they already are — the app never copies them into its own directory. The only outbound connections are SSH to your own servers and an HTTPS update check.
 
 ---
 
@@ -67,15 +67,45 @@ No account, no cloud, no telemetry. Passwords live in Windows Credential Manager
 
 ## Installation
 
+### Windows
+
 1. Download `LucidSSH-Setup-x.x.x-x64.exe` from [Releases](https://github.com/Xykyma/LucidSSH/releases).
 2. Verify the SHA-256 checksum — it's published in the release description.
 3. Run the installer.
 
 **About the Windows SmartScreen warning.** Version 1.0 ships without a code-signing certificate — that's a deliberate, deferred decision, not an oversight. Because of this, Windows may show a "Windows protected your PC" warning on first launch. This is expected for new unsigned apps and doesn't mean the file is corrupted — click "More info" → "Run anyway". You can additionally verify the SHA-256 checksum against the downloaded file if you want extra assurance.
 
+### Linux
+
+> **Linux builds arrive in version 1.1.** They are not in the current release yet; the section below describes how things will work.
+
+Download a build from [Releases](https://github.com/Xykyma/LucidSSH/releases):
+
+- **`.deb`** — recommended for Ubuntu and Debian: `sudo apt install ./LucidSSH-x.x.x-amd64.deb`. Updated manually — download the new version from Releases (the button in About opens the page).
+- **`.AppImage`** — for other distributions: `chmod +x` and run. Updates automatically.
+
+Saving passwords requires Secret Service — gnome-keyring or KWallet (usually already present in GNOME and KDE). Without it the app works, but passwords can't be saved: connect with a key or type the password each time.
+
+**AppImage on Ubuntu 24.04:**
+
+- Requires the `libfuse2t64` package: `sudo apt install libfuse2t64`. Without it the AppImage won't start.
+- AppArmor on Ubuntu 23.10+ forbids unprivileged user namespaces, so an Electron AppImage may fail to start. The simplest fix is to install the `.deb`. If you need the AppImage, create the profile `/etc/apparmor.d/lucidssh` (use your own file path):
+
+  ```
+  abi <abi/4.0>,
+  include <tunables/global>
+  profile lucidssh /home/USER/Applications/LucidSSH-*.AppImage flags=(unconfined) {
+    userns,
+  }
+  ```
+
+  and load it: `sudo apparmor_parser -r /etc/apparmor.d/lucidssh`. We don't use `--no-sandbox` — it weakens window isolation.
+
+The key-creation wizard needs `ssh-keygen`: `sudo apt install openssh-client`.
+
 ### System requirements
 
-- Windows 10 (version 1903+) or Windows 11, x64
+- Windows 10 (version 1903+) or Windows 11, x64; or Linux x64 (Ubuntu 22.04+ or equivalent)
 - 200 MB RAM idle
 
 ---
@@ -87,7 +117,7 @@ LucidSSH collects no telemetry, requires no account, and sends data nowhere exce
 - SSH connections to the hosts you add;
 - a check for new versions against GitHub Releases (on demand and at startup, non-blocking).
 
-Passwords are stored in Windows Credential Manager. Private keys are never copied into the app's directory — the original path on disk is used.
+Passwords are stored in the system password store: Windows Credential Manager, or Secret Service (gnome-keyring, KWallet) on Linux. Private keys are never copied into the app's directory — the original path on disk is used.
 
 ---
 
@@ -101,7 +131,7 @@ Local, offline AI-powered explanations are planned for version 1.2, to complemen
 
 ## Stack
 
-Electron · TypeScript · React · xterm.js · ssh2 · SQLite (better-sqlite3) · Windows Credential Manager (keytar)
+Electron · TypeScript · React · xterm.js · ssh2 · SQLite (better-sqlite3) · system password store (keytar)
 
 ---
 
