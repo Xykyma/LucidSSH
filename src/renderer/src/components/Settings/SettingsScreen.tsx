@@ -889,7 +889,10 @@ function AboutSection({
   const updateState = status?.state ?? 'idle';
   const busy = updateState === 'checking' || updateState === 'downloading';
 
+  const manualOnly = status?.manualOnly === true;
+
   const statusLine = ((): string | null => {
+    if (manualOnly) return t('settings.updates.manualDeb');
     if (status?.notConfigured) return null; // не загромождаем компактную карточку в dev
     switch (updateState) {
       case 'checking':
@@ -946,10 +949,10 @@ function AboutSection({
           <button
             type="button"
             disabled={busy}
-            onClick={onUpdateClick}
+            onClick={manualOnly ? () => window.lucidSSH.openReleasesPage() : onUpdateClick}
             className="h-[34px] shrink-0 rounded-[6px] border border-[rgba(255,255,255,0.12)] bg-bg-elevated-2 px-[14px] text-[12.5px] font-medium text-text-strong hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {updateLabel}
+            {manualOnly ? t('settings.updates.openReleases') : updateLabel}
           </button>
         </div>
         {(statusLine || confirmInstall) && (

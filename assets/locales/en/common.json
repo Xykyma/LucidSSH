@@ -755,6 +755,8 @@
       "error": "Could not check for updates",
       "idle": "Check for updates",
       "notConfigured": "Update source is not configured",
+      "manualDeb": "This build (.deb) is updated manually",
+      "openReleases": "Open Releases",
       "autoCheck": "Auto-check for updates",
       "autoCheckDesc": "Check for new versions on launch (HTTPS to the update source)."
     },
