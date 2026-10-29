@@ -5,11 +5,15 @@ import type { WindowState } from '@shared/config';
 import { loadConfig, updateConfig } from '../config/store';
 import { activeSessionCount, busySessions } from '../ssh/sessionManager';
 import { emit } from '../ipc/events';
+import { showOnReady } from './showOnReady';
 
 /**
  * Главное окно: изоляция renderer (SEC-05) + сохранение/восстановление
  * размера и положения (WIN-01).
  */
+
+/** Через сколько показать окно, если ready-to-show так и не пришёл. */
+const SHOW_FALLBACK_MS = 4000;
 
 let mainWindow: BrowserWindow | null = null;
 let forceClose = false;
@@ -84,7 +88,9 @@ export function createMainWindow(): BrowserWindow {
 
   if (saved.maximized) mainWindow.maximize();
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Без рабочего GPU (VM без 3D) ready-to-show может не прийти — тогда окно
+  // показывается по таймеру, иначе приложение остаётся невидимым процессом.
+  showOnReady(mainWindow, SHOW_FALLBACK_MS);
 
   // WIN-01: сохранение состояния с дебаунсом
   let saveTimer: NodeJS.Timeout | null = null;
