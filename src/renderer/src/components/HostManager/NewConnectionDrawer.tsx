@@ -1,7 +1,8 @@
 import type { JSX } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AuthMethod, Host, HostInput } from '@shared/hosts';
+import { isWindows } from '@/hooks/platform';
+import { SECRET_STORE_UNAVAILABLE, type AuthMethod, type Host, type HostInput } from '@shared/hosts';
 import type { TestConnectionResult } from '@shared/ssh';
 import { useHosts } from '@/stores/hosts';
 import { useSessions } from '@/stores/sessions';
@@ -33,6 +34,13 @@ interface FormState {
   secret: string; // пароль или passphrase; не хранится дольше сабмита
   guardEnabled: boolean; // GUARD-05
   historyEnabled: boolean; // HIST-07
+}
+
+/** Electron оставляет в `invoke`-ошибке только message — отказ хранилища узнаём по маркеру. */
+function errorKind(err: unknown): 'save' | 'secretStore' {
+  return err instanceof Error && err.message.includes(SECRET_STORE_UNAVAILABLE)
+    ? 'secretStore'
+    : 'save';
 }
 
 /**
@@ -167,7 +175,8 @@ export function NewConnectionDrawer(): JSX.Element | null {
   const showHints = config?.ui.hints.connectionDialog ?? true;
   const [form, setForm] = useState<FormState | null>(null);
   const [hasSavedSecret, setHasSavedSecret] = useState(false);
-  const [error, setError] = useState(false);
+  // 'secretStore' — отказ Хранилища секретов, 'save' — всё прочее (валидация и т.д.)
+  const [error, setError] = useState<'save' | 'secretStore' | false>(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
@@ -213,7 +222,7 @@ export function NewConnectionDrawer(): JSX.Element | null {
         guardEnabled: editHost.guardEnabled,
         historyEnabled: editHost.historyEnabled
       });
-      void window.lucidSSH.hostHasSecret(editHost.id).then(setHasSavedSecret);
+      void window.lucidSSH.hostHasSecret(editHost.id).then(setHasSavedSecret).catch(() => {});
     } else {
       const preset = drawer.presetQuickConnect;
       setForm({
@@ -292,8 +301,12 @@ export function NewConnectionDrawer(): JSX.Element | null {
 
   const deleteSecret = async (): Promise<void> => {
     if (!editHost) return;
-    await window.lucidSSH.hostDeleteSecret(editHost.id);
-    setHasSavedSecret(false);
+    try {
+      await window.lucidSSH.hostDeleteSecret(editHost.id);
+      setHasSavedSecret(false);
+    } catch (err) {
+      setError(errorKind(err));
+    }
     setDeleteSecretConfirmOpen(false);
   };
 
@@ -314,8 +327,8 @@ export function NewConnectionDrawer(): JSX.Element | null {
       await refresh();
       closeDrawer();
       if (doConnect) await connect(hostId);
-    } catch {
-      setError(true);
+    } catch (err) {
+      setError(errorKind(err));
     } finally {
       setSaving(false);
     }
@@ -608,7 +621,13 @@ export function NewConnectionDrawer(): JSX.Element | null {
 
           {error && (
             <div className="rounded-[6px] border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger-text">
-              {t('conn.saveError')}
+              {t(
+                error !== 'secretStore'
+                  ? 'conn.saveError'
+                  : isWindows
+                    ? 'conn.secretStoreError'
+                    : 'conn.secretStoreErrorLinux'
+              )}
             </div>
           )}
         </div>

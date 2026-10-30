@@ -265,6 +265,8 @@ import * as puttyImportModule from '../hosts/puttyImport';
 import * as sshConfigImportModule from '../hosts/sshConfigImport';
 import * as winscpImportModule from '../hosts/winscpImport';
 import * as keychainModule from '../keychain';
+import { SecretStoreUnavailableError } from '../keychain/errors';
+import { SECRET_STORE_UNAVAILABLE } from '@shared/hosts';
 import * as hostKeyDecisionModule from '../ssh/hostKeyDecision';
 import * as keygenModule from '../ssh/keygen';
 import * as knownHostsModule from '../ssh/knownHosts';
@@ -1240,5 +1242,72 @@ describe('keygen:open-install — deep-link только на Windows', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     await invoke(IPC.keygenOpenInstall, mainEvent());
     expect(mockOpenExternal).toHaveBeenCalledWith('ms-settings:optionalfeatures');
+  });
+});
+
+describe('Хранилище секретов недоступно (тикет 08)', () => {
+  const mockGetHost = vi.mocked(hostsRepositoryModule.getHost);
+  const mockCreateHost = vi.mocked(hostsRepositoryModule.createHost);
+  const mockDeleteHost = vi.mocked(hostsRepositoryModule.deleteHost);
+  const mockUpdateHost = vi.mocked(hostsRepositoryModule.updateHost);
+  const mockSetSecret = vi.mocked(keychainModule.setSecret);
+  const mockHasSecret = vi.mocked(keychainModule.hasSecret);
+  const mockDeleteSecret = vi.mocked(keychainModule.deleteSecret);
+
+  it('hosts:create — причина отличима от валидации, строка хоста откатана', async () => {
+    mockCreateHost.mockReturnValue(42);
+    mockSetSecret.mockRejectedValueOnce(new SecretStoreUnavailableError());
+
+    const result = await invoke(IPC.hostCreate, mainEvent(), validHostInput(), 's3cr3t');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect((result.error as Error).message).toBe(SECRET_STORE_UNAVAILABLE);
+    expect(result.error).not.toBeInstanceOf(IpcValidationError);
+    expect(mockDeleteHost).toHaveBeenCalledWith(42);
+  });
+
+  it('hosts:update — причина отличима от валидации, строка хоста не изменена', async () => {
+    mockGetHost.mockReturnValue(fakeHost({ id: 7 }));
+    mockSetSecret.mockRejectedValueOnce(new SecretStoreUnavailableError());
+
+    const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(), 's3cr3t');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect((result.error as Error).message).toBe(SECRET_STORE_UNAVAILABLE);
+    expect(mockUpdateHost).not.toHaveBeenCalled();
+  });
+
+  it('hosts:hasSecret — отказ хранилища → false', async () => {
+    mockHasSecret.mockRejectedValueOnce(new SecretStoreUnavailableError());
+
+    expect(await invoke(IPC.hostHasSecret, mainEvent(), 1)).toEqual({ ok: true, value: false });
+  });
+
+  it('hosts:hasSecret — прочая ошибка не маскируется под false', async () => {
+    mockHasSecret.mockRejectedValueOnce(new Error('boom'));
+
+    expect((await invoke(IPC.hostHasSecret, mainEvent(), 1)).ok).toBe(false);
+  });
+
+  it('hosts:delete — отказ deleteSecret после удаления строки → { deleted: true }', async () => {
+    mockGetHost.mockReturnValue(fakeHost());
+    mockDeleteSecret.mockRejectedValueOnce(new SecretStoreUnavailableError());
+
+    const result = await invoke(IPC.hostDelete, mainEvent(), 1, true);
+
+    expect(result).toEqual({ ok: true, value: { deleted: true } });
+    expect(mockDeleteHost).toHaveBeenCalledWith(1);
+  });
+
+  it('hosts:deleteSecret — отказ не молчаливый успех', async () => {
+    mockDeleteSecret.mockRejectedValueOnce(new SecretStoreUnavailableError());
+
+    const result = await invoke(IPC.hostDeleteSecret, mainEvent(), 1);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect((result.error as Error).message).toBe(SECRET_STORE_UNAVAILABLE);
   });
 });

@@ -6,6 +6,7 @@ import { DASHBOARD_ALERT_ISSUES, type DashboardAlertIssue } from '@shared/dashbo
 import * as repo from '../hosts/repository';
 import { addDismissedAlert } from '../hosts/dashboardMutes';
 import * as keychain from '../keychain';
+import { SecretStoreUnavailableError } from '../keychain/errors';
 import { keyFileExists } from '../hosts/keyFile';
 import { applyPassphrase, clearPendingDeployment, findSshKeygen, generateKeyPair } from '../ssh/keygen';
 import { PASSPHRASE_MIN, type KeygenGenerateRequest, type KeygenGenerateResult } from '@shared/keygen';
@@ -94,6 +95,8 @@ export function registerHostIpcHandlers(): void {
         } catch (err) {
           // Ключ keychain — id хоста, поэтому секрет первым не записать: откатываем
           // строку, иначе повтор «Сохранить» создаст дубликат без секрета.
+          // Отказ хранилища (SecretStoreUnavailableError) идёт дальше как есть:
+          // его message — маркер для renderer.
           repo.deleteHost(id);
           throw err;
         }
@@ -150,8 +153,14 @@ export function registerHostIpcHandlers(): void {
       // ON DELETE CASCADE) берёт на себя СУБД — hosts.db, foreign_keys=ON
       // (.scratch/host-scoped-flags-to-db).
       repo.deleteHost(id);
-      // Секрет удаляется вместе с хостом (§10 гайда)
-      await keychain.deleteSecret(id);
+      // Секрет удаляется вместе с хостом (§10 гайда). Отказ хранилища не делает
+      // удаление ошибкой: строки уже нет, а осиротевший секрет безвреден —
+      // hosts.id AUTOINCREMENT, id не переиспользуется.
+      try {
+        await keychain.deleteSecret(id);
+      } catch (err) {
+        if (!(err instanceof SecretStoreUnavailableError)) throw err;
+      }
       // HM-12: незачем хранить в config.json ожидающий ключ удалённого хоста
       if (host?.keyPath) clearPendingDeployment(host.keyPath);
       return { deleted: true };
@@ -161,8 +170,14 @@ export function registerHostIpcHandlers(): void {
   ipcMain.handle(IPC.hostHasSecret, async (event, rawId: unknown): Promise<boolean> => {
     assertSenderIsMainWindow(event);
     const id = validateId(rawId, 'hostId');
-    // Только факт наличия — само значение никогда не покидает main (SEC-01)
-    return keychain.hasSecret(id);
+    // Только факт наличия — само значение никогда не покидает main (SEC-01).
+    // Хранилище недоступно → «секрета нет»: форма не должна падать от этого.
+    try {
+      return await keychain.hasSecret(id);
+    } catch (err) {
+      if (err instanceof SecretStoreUnavailableError) return false;
+      throw err;
+    }
   });
 
   ipcMain.handle(IPC.hostDeleteSecret, async (event, rawId: unknown): Promise<void> => {
