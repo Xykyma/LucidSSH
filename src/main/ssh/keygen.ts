@@ -1,14 +1,15 @@
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
+import { utils } from 'ssh2';
 import type { KeygenGenerateRequest, KeygenGenerateResult, PendingKeyDeployment } from '@shared/keygen';
 import { loadConfig, updateConfig } from '../config/store';
 import type { Connection } from './connection';
 
 /**
  * Мастер создания SSH-ключа (HM-12):
- * — генерация пары Ed25519 через системный `ssh-keygen.exe` (SEC-04 — не
+ * — генерация пары Ed25519 через системный `ssh-keygen` (SEC-04 — не
  *   собственная и не сторонняя криптография), файл `~/.ssh/id_ed25519_<slug>`;
  * — реестр «публичный ключ ждёт дозаписи на сервер»: заполняется при
  *   генерации (идентификатор — keyPath, см. PendingKeyDeployment), срабатывает
@@ -54,21 +55,26 @@ function execFileP(
   });
 }
 
-/** Путь к системному ssh-keygen.exe: компонент Windows «Клиент OpenSSH», затем PATH. */
-export async function findSshKeygen(): Promise<string | null> {
-  const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows';
-  const builtin = join(systemRoot, 'System32', 'OpenSSH', 'ssh-keygen.exe');
-  if (existsSync(builtin)) return builtin;
-  try {
-    const { stdout } = await execFileP('where.exe', ['ssh-keygen']);
-    const first = stdout
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .find((s) => s.length > 0);
-    return first ?? null;
-  } catch {
-    return null;
-  }
+/**
+ * Где искать ssh-keygen: на Windows сначала компонент «Клиент OpenSSH», затем
+ * PATH. Только абсолютные каталоги: пустой элемент PATH в POSIX — это текущий
+ * каталог, и подложенный туда бинарь получил бы ключ и passphrase.
+ */
+export function sshKeygenCandidates(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
+  const isWindows = platform === 'win32';
+  const { delimiter, isAbsolute, join: joinPath } = isWindows ? win32 : posix;
+  const fromPath = (env['PATH'] ?? '')
+    .split(delimiter)
+    .filter((dir) => isAbsolute(dir))
+    .map((dir) => joinPath(dir, isWindows ? 'ssh-keygen.exe' : 'ssh-keygen'));
+  if (!isWindows) return fromPath;
+  const systemRoot = env['SystemRoot'] ?? 'C:\\Windows';
+  return [joinPath(systemRoot, 'System32', 'OpenSSH', 'ssh-keygen.exe'), ...fromPath];
+}
+
+/** Путь к системному ssh-keygen или null, если его нет. */
+export function findSshKeygen(): string | null {
+  return sshKeygenCandidates(process.platform, process.env).find((p) => existsSync(p)) ?? null;
 }
 
 /**
@@ -88,7 +94,7 @@ export function isSafePublicKeyLine(line: string): boolean {
 const generatedThisRun = new Set<string>();
 
 export async function generateKeyPair(req: KeygenGenerateRequest): Promise<KeygenGenerateResult> {
-  const bin = await findSshKeygen();
+  const bin = findSshKeygen();
   if (!bin) return { ok: false, reason: 'keygen-missing' };
 
   const sshDir = join(homedir(), '.ssh');
@@ -132,40 +138,56 @@ function sanitizeComment(s: string): string {
  *  `echo(` — чтобы значение вида `/?` не стало ключом echo. */
 const ASKPASS_VAR = 'LUCIDSSH_ASKPASS';
 const ASKPASS_CMD = `@echo off\r\nsetlocal EnableDelayedExpansion\r\necho(!${ASKPASS_VAR}!\r\n`;
+/** POSIX-вариант: `printf '%s\n'` выводит значение как есть, в отличие от `echo`. */
+const ASKPASS_SH = `#!/bin/sh\nprintf '%s\\n' "$${ASKPASS_VAR}"\n`;
 /** Ответ askpass ssh-keygen читает в буфер 1024 байта: длиннее — молча обрежет,
  *  и сохранённая полная passphrase ключ не откроет. */
 const ASKPASS_MAX_BYTES = 1023;
+
+/** Пишет askpass-хелпер платформы в `dir`, возвращает его путь. Секрета в файле нет. */
+export function writeAskpass(dir: string, platform: NodeJS.Platform): string {
+  if (platform === 'win32') {
+    const file = join(dir, 'askpass.cmd');
+    writeFileSync(file, ASKPASS_CMD);
+    return file;
+  }
+  const file = join(dir, 'askpass.sh');
+  writeFileSync(file, ASKPASS_SH, { mode: 0o700 });
+  return file;
+}
 
 /**
  * Шаг 2 мастера: навесить passphrase на только что созданный ключ (была пустая).
  * Не через `-N <passphrase>`: командная строка процесса видна любому процессу
  * пользователя и пишется аудитом (Event 4688, Sysmon, EDR). ssh-keygen сам
  * спрашивает новую passphrase (дважды) у SSH_ASKPASS, а тот берёт её из
- * унаследованного окружения — в argv ни ssh-keygen, ни cmd её нет.
- * Проверено на OpenSSH_for_Windows 9.5p1; SSH_ASKPASS_REQUIRE — с OpenSSH 8.4.
+ * унаследованного окружения — в argv ни ssh-keygen, ни хелпера её нет.
+ * Проверено на OpenSSH_for_Windows 9.5p1 и OpenSSH 9.6p1 (Ubuntu 24.04);
+ * SSH_ASKPASS_REQUIRE — с OpenSSH 8.4.
  */
 export async function applyPassphrase(keyPath: string, passphrase: string): Promise<boolean> {
   if (!generatedThisRun.has(keyPath)) return false;
   if (Buffer.byteLength(passphrase, 'utf8') > ASKPASS_MAX_BYTES) return false;
-  const bin = await findSshKeygen();
+  const bin = findSshKeygen();
   if (!bin) return false;
   let dir: string | undefined;
   try {
     dir = mkdtempSync(join(tmpdir(), 'lucidssh-askpass-'));
-    const askpass = join(dir, 'askpass.cmd');
-    writeFileSync(askpass, ASKPASS_CMD);
+    const askpass = writeAskpass(dir, process.platform);
     await execFileP(bin, ['-q', '-p', '-P', '', '-f', keyPath], {
       ...process.env,
       SSH_ASKPASS: askpass,
       SSH_ASKPASS_REQUIRE: 'force',
       [ASKPASS_VAR]: passphrase
     });
-    return true;
+    // Код 0 не доказывает защиту: askpass, который не запустился (noexec /tmp,
+    // антивирус), ssh-keygen принимает за пустую passphrase и пишет ключ как был.
+    return utils.parseKey(readFileSync(keyPath)) instanceof Error;
   } catch {
     return false;
   } finally {
     // Ключ уже зашифрован — неудача уборки (антивирус держит .cmd) не должна
-    // превращать успех в отказ; в скрипте нет секрета, остаток в %TEMP% безвреден.
+    // превращать успех в отказ; в скрипте нет секрета, остаток во временном каталоге безвреден.
     try {
       if (dir) rmSync(dir, { recursive: true, force: true });
     } catch {

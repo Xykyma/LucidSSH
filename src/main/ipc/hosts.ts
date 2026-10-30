@@ -192,9 +192,9 @@ export function registerHostIpcHandlers(): void {
   });
 
   // --- Мастер создания SSH-ключа (HM-12) ---
-  ipcMain.handle(IPC.keygenAvailable, async (event): Promise<boolean> => {
+  ipcMain.handle(IPC.keygenAvailable, (event): boolean => {
     assertSenderIsMainWindow(event);
-    return (await findSshKeygen()) !== null;
+    return findSshKeygen() !== null;
   });
 
   ipcMain.handle(
@@ -223,9 +223,11 @@ export function registerHostIpcHandlers(): void {
   );
 
   // Захардкоженный deep-link на компоненты Windows (§22 гайда — внешние
-  // ссылки только на заранее определённые адреса).
+  // ссылки только на заранее определённые адреса). `ms-settings:` есть только
+  // на Windows.
   ipcMain.on(IPC.keygenOpenInstall, (event) => {
     assertSenderIsMainWindow(event);
+    if (process.platform !== 'win32') return;
     void shell.openExternal('ms-settings:optionalfeatures');
   });
 
