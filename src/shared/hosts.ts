@@ -5,6 +5,9 @@
 
 export type AuthMethod = 'password' | 'key';
 
+/** Маркер в `message` ошибки `invoke`: Хранилище секретов отказало (а не ввод невалиден). */
+export const SECRET_STORE_UNAVAILABLE = 'SECRET_STORE_UNAVAILABLE';
+
 export interface HostGroup {
   id: number;
   name: string;
