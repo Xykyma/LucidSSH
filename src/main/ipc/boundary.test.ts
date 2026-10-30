@@ -1,6 +1,6 @@
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
 import type { AppConfig } from '@shared/config';
 import { DEFAULT_HOTKEYS } from '@shared/hotkeys';
@@ -1218,5 +1218,27 @@ describe('UNC/device-путь к ключу отклоняется на кажд
     vi.mocked(keyFileModule.keyFileExists).mockReturnValue(true);
     const result = await invoke(IPC.hostKeyFileExists, mainEvent(), 'C:\\keys\\id');
     expect(result).toEqual({ ok: true, value: true });
+  });
+});
+
+describe('keygen:open-install — deep-link только на Windows', () => {
+  const realPlatform = process.platform;
+  const mockOpenExternal = vi.mocked(electron.shell.openExternal);
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform });
+  });
+
+  it('linux — ms-settings не открывается', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const result = await invoke(IPC.keygenOpenInstall, mainEvent());
+    expect(result.ok).toBe(true);
+    expect(mockOpenExternal).not.toHaveBeenCalled();
+  });
+
+  it('win32 — открывается компонент Windows (контроль)', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    await invoke(IPC.keygenOpenInstall, mainEvent());
+    expect(mockOpenExternal).toHaveBeenCalledWith('ms-settings:optionalfeatures');
   });
 });
