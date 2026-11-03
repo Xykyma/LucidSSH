@@ -57,6 +57,10 @@ deb:
     - libatspi2.0-0
     - libuuid1
     - libsecret-1-0
+  # chrome-sandbox Electron должен быть root:root 4755, иначе падение
+  # на Ubuntu 23.10+/24.04 (проверено живьём, тикет 07). В пакете файл
+  # уходит с 0755 — setuid-бит выставляется postinst.
+  afterInstall: build/deb-after-install.sh
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
