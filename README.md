@@ -88,7 +88,7 @@ LucidSSH занимает другую нишу: он для тех, кто уп
 
 **AppImage на Ubuntu 24.04:**
 
-- Нужен пакет `libfuse2t64`: `sudo apt install libfuse2t64`. Без него AppImage не запускается.
+- Нужен пакет `libfuse2t64`: `sudo apt install libfuse2t64`. Без него AppImage не запускается. (На Ubuntu 22.04 пакет называется `libfuse2`; сборка на 22.04 не тестировалась — проверено на 24.04.)
 - AppArmor в Ubuntu 23.10+ запрещает непривилегированные user namespaces, и AppImage с Electron может не стартовать. Самый простой выход — поставить `.deb`. Если нужен именно AppImage, создай профиль `/etc/apparmor.d/lucidssh` (подставь свой путь к файлу):
 
   ```

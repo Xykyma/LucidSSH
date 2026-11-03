@@ -88,7 +88,7 @@ Saving passwords requires Secret Service — gnome-keyring or KWallet (usually a
 
 **AppImage on Ubuntu 24.04:**
 
-- Requires the `libfuse2t64` package: `sudo apt install libfuse2t64`. Without it the AppImage won't start.
+- Requires the `libfuse2t64` package: `sudo apt install libfuse2t64`. Without it the AppImage won't start. (On Ubuntu 22.04 the package is named `libfuse2`; the build has not been tested on 22.04 — verified on 24.04.)
 - AppArmor on Ubuntu 23.10+ forbids unprivileged user namespaces, so an Electron AppImage may fail to start. The simplest fix is to install the `.deb`. If you need the AppImage, create the profile `/etc/apparmor.d/lucidssh` (use your own file path):
 
   ```
