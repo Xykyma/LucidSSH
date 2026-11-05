@@ -264,23 +264,19 @@ On a quota interruption, the incoming agent reconstructs progress from Git/files
 
 ## 13. Model selection and transparency
 
-### Before each independent task
+### Once at session start
 
-Classify complexity as simple, medium or high. Choose among models actually exposed by the installed client and account, balancing quality, speed and quota. Prefer Kimi for implementation, preserving Codex availability for review/fallback. Use the least costly available model adequate for the task; critical security review and difficult design/debugging justify a stronger model. Historical model suggestions in tickets are context, not a fixed catalog or proof of availability.
+At the beginning of a new chat/session, assess the planned work and recommend an available model and reasoning effort once, balancing quality, speed and quota. Prefer Kimi for implementation, preserving Codex availability for review/fallback. Historical model suggestions in tickets are context, not a fixed catalog or proof of availability.
 
-Before executing the task, send this short banner in the user's language (Russian example):
+Use one short line in the user's language, with only the model, effort and a brief reason (Russian format):
 
 ```text
-AI: Codex / Kimi Code
-Задача: <task>
-Сложность: <простая / средняя / высокая>
-Текущая модель: <confirmed runtime model, or «не определена»>
-Рекомендуемая модель: <available model, or conditional recommendation if availability is unknown>
-Reasoning effort: <confirmed value, «не определён» or «не поддерживается»>
-Причина выбора: <brief explanation when the recommendation differs>
+Модель: <model> · Усилие: <effort> — <brief reason>.
 ```
 
-Send it once per new independent task, not per message, tool call or internal step. If switching the main session is necessary and unavailable to the agent, explain the client-supported way to switch; never claim a switch happened without confirmation. Continue work already authorized on the current model rather than blocking solely for a recommendation.
+Label a recommendation as a recommendation if it differs from the confirmed current model; use «не определена» / «не определено» for unknown model/effort details. Never claim a model switch without confirmation. If the user wants to apply a recommendation and the agent cannot switch, briefly explain the client-supported control.
+
+Keep the main model and effort for the rest of the session. Follow-up messages, new tasks in the same chat, tool calls, context compaction and resuming that chat do not trigger another model assessment or announcement. Revisit the choice only when the user explicitly asks. If the user or host actually changes the model/effort, disclose the confirmed change once in the same short format. Continue authorized work on the current model; do not pause or propose a new chat solely for model selection.
 
 ### Evidence and subagents
 
@@ -291,15 +287,15 @@ Send it once per new independent task, not per message, tool call or internal st
 
 ### Skills, plugins, MCP and other tools
 
-At first use or in the task report, identify significant tools by name and purpose, executor (main agent, subagent, external service or local script), known model and whether a separate model was used. Group repeated calls to the same tool; avoid per-call boilerplate.
+Identify significant tools by name and purpose when useful. Disclose a separate model executor when one is involved; ordinary tool calls do not trigger another main-model announcement. Group repeated calls to the same tool; avoid per-call boilerplate.
 
-- An instructional skill runs on the invoking main agent or subagent; name that executor's confirmed model or say unknown.
+- An instructional skill runs on the invoking main agent or subagent; it does not by itself imply a separate model. Reuse the session's main-model disclosure rather than repeating it for each skill.
 - A compiler, ordinary function, local script or API without an LLM uses **no separate model**.
 - For a plugin/MCP using an external LLM, report a model only if the tool confirms it; otherwise say **model unknown**. If its internals are undisclosed, do not assert either presence or absence of an LLM. Missing model metadata does not block execution.
 - Skills, plugins and MCP connections available in one client are not automatically installed or available in the other. Inspect the current tool inventory and use authorized existing alternatives. Do not install or copy global configurations as an implicit handoff step.
 
 ### Final task report
 
-State completed work, the confirmed main model (or unknown details), subagents/models used (or none), significant skills/plugins/MCP, checks and results, outstanding work and material limitations. Never invent exact models, token usage, cost or quota savings.
+State completed work, checks and results, outstanding work and material limitations. Mention significant tools or subagents/models when relevant. Do not repeat the main model/effort in every task report; the session-start disclosure is sufficient unless it changed or the user asks. Never invent exact models, token usage, cost or quota savings.
 
 This policy supplements the existing project rules and remains subject to the host's higher-priority instructions and actual capabilities.
