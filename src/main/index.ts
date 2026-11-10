@@ -13,6 +13,7 @@ import { initUpdater, checkForUpdates } from './updates/updater';
 import { initMainI18n, t } from './i18n';
 import { openLocalStores } from './startup/openLocalStores';
 import { prepareProfileIdentity } from './startup/profileIdentity';
+import { checkProfileWritability } from './startup/profileWritability';
 import { loadConfig } from './config/store';
 
 /**
@@ -52,6 +53,23 @@ if (!gotLock) {
       loadConfig();
       await initMainI18n();
       dialog.showErrorBox(t('profileIdentity.error.title'), t(`profileIdentity.error.${identity.error}`));
+      app.quit();
+      return;
+    }
+    // Записываемость Переносимого профиля (NFR-05): реальные пробы записи до
+    // открытия хранилищ и миграций. Отказ — блокирующая локализованная ошибка
+    // с именем проблемного файла; fallback, read-only и частичный запуск
+    // без сохранения запрещены.
+    const writability = checkProfileWritability();
+    if (!writability.ok) {
+      // Язык — из конфигурации; базы не открываем: файлов профиля при этом
+      // не создаётся и не меняется (см. ветку идентичности выше).
+      loadConfig();
+      await initMainI18n();
+      dialog.showErrorBox(
+        t('profileWritability.error.title'),
+        t('profileWritability.error.message', { file: writability.file })
+      );
       app.quit();
       return;
     }
