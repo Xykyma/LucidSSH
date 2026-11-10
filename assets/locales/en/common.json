@@ -886,5 +886,13 @@
       "item2": "Steps can be inserted into the input or copied in one click.",
       "item3": "The panel doesn't cover the input; close with Esc or ×."
     }
+  },
+  "profileIdentity": {
+    "error": {
+      "title": "Portable profile corrupted",
+      "artifactsWithoutId": "The profile.id file is missing next to LucidSSH data, so the portable profile's identity is lost. To keep your saved passwords reachable, the app will not start from this folder and will not create a new ID automatically. Restore the original profile.id from a copy of the folder. For a new, independent profile choose a different, empty folder.",
+      "invalidId": "The profile.id file is empty or does not contain a valid profile identifier. To keep your saved passwords reachable, the app will not start from this folder and will not create a new ID automatically. Restore the original profile.id from a copy of the folder. For a new, independent profile choose a different, empty folder.",
+      "createFailed": "Could not create profile.id next to the application — the folder is probably read-only. Check the folder permissions and start LucidSSH again."
+    }
   }
 }

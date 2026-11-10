@@ -23,11 +23,16 @@ let cached: AppConfig | null = null;
  * Electron (кэши Chromium и пр.) глобально не перенаправляется.
  */
 export function configDir(): string {
-  if (app.isPackaged && process.platform === 'win32' && process.env.PORTABLE_EXECUTABLE_DIR) {
-    return process.env.PORTABLE_EXECUTABLE_DIR;
+  if (isPortableBuild()) {
+    return process.env.PORTABLE_EXECUTABLE_DIR!;
   }
   // app.getPath('userData') → %APPDATA%\LucidSSH (productName задаёт имя папки)
   return app.getPath('userData');
+}
+
+/** Режимом владеет запущенный артефакт (см. configDir). */
+export function isPortableBuild(): boolean {
+  return app.isPackaged && process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_DIR;
 }
 
 function configPath(): string {
