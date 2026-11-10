@@ -79,7 +79,13 @@ export function prepareProfileIdentity(): ProfileIdentityResult {
     cached = id;
     return { ok: true, profileId: id };
   } catch {
-    rmSync(tmp, { force: true });
+    // Очистка не должна маскировать причину сбоя: на Linux rmSync через
+    // обычный файл (configDir указывает не на каталог) бросает ENOTDIR.
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // остаток tmp безвреден — при блокировке запуска он не мешает
+    }
     return { ok: false, error: 'createFailed' };
   }
 }
