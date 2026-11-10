@@ -6,14 +6,26 @@ import { createDefaultConfig } from './defaults';
 import { mergeWithDefaults } from './merge';
 
 /**
- * Хранилище настроек: %APPDATA%\LucidSSH\config.json (§7 ТЗ).
- * Секреты сюда не пишутся никогда (SEC-01). Запись атомарная (tmp + rename),
- * чтобы сбой на середине записи не портил файл.
+ * Хранилище настроек: config.json в каталоге профиля (§7 ТЗ). У установленной
+ * версии и в dev это %APPDATA%\LucidSSH; у portable-сборки — папка исходного exe
+ * (см. configDir). Секреты сюда не пишутся никогда (SEC-01). Запись атомарная
+ * (tmp + rename), чтобы сбой на середине записи не портил файл.
  */
 
 let cached: AppConfig | null = null;
 
+/**
+ * Единая точка выбора каталога профиля (NFR-05): отсюда берут путь настройки,
+ * обе БД, known_hosts и резервные копии. Режимом владеет запущенный артефакт:
+ * electron-builder задаёт PORTABLE_EXECUTABLE_DIR только упакованной Windows
+ * portable-сборке, поэтому dev, неупакованное приложение и другие платформы
+ * переменную игнорируют и держат прежний системный каталог. Системный каталог
+ * Electron (кэши Chromium и пр.) глобально не перенаправляется.
+ */
 export function configDir(): string {
+  if (app.isPackaged && process.platform === 'win32' && process.env.PORTABLE_EXECUTABLE_DIR) {
+    return process.env.PORTABLE_EXECUTABLE_DIR;
+  }
   // app.getPath('userData') → %APPDATA%\LucidSSH (productName задаёт имя папки)
   return app.getPath('userData');
 }

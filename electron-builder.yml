@@ -33,7 +33,16 @@ win:
     - target: nsis
       arch:
         - x64
+    # Portable exe (NFR-05): тот же код и версия, профиль данных — в папке
+    # исходного exe (PORTABLE_EXECUTABLE_DIR, см. config/store.ts configDir).
+    - target: portable
+      arch:
+        - x64
   artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
+portable:
+  # Имя отличается от NSIS-установщика; portable не становится пакетом
+  # автообновления — latest.yml по-прежнему формируется только для NSIS.
+  artifactName: "${productName}-Portable-${version}-${arch}.${ext}"
 linux:
   target:
     - target: AppImage
