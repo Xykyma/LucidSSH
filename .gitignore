@@ -20,3 +20,6 @@ private/
 
 # Граф знаний graphify — генерируется локально, пересобирается через /graphify
 graphify-out/
+
+# Machine-specific Codex hooks
+/.codex/hooks.json
