@@ -56,6 +56,7 @@ describe('configDir — portable-сборка Windows', () => {
   it('настройки, обе БД, known_hosts и резервные копии создаются в каталоге exe; системный профиль нетронут', async () => {
     packaged = true;
     process.env[ENV] = exeDir;
+    Object.defineProperty(process, 'platform', { value: 'win32' }); // portable-режим существует только на Windows, а CI гоняет тесты и на Linux
 
     const store = await freshStore();
     expect(store.configDir()).toBe(exeDir);
