@@ -105,6 +105,7 @@
     "auth": "Authentication",
     "authPassword": "Password",
     "authKey": "Key",
+    "destinationSecretReset": "Changing the server, port, login, sign-in method or key file discards the saved password or passphrase — you'll be asked for it again when connecting",
     "password": "Server password",
     "passwordHelper": "Stored in the system password store, not in app files",
     "passwordSavedHelper": "Password is saved. Leave empty to keep it",

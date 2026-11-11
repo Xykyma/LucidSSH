@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Editing a host's server, login, auth method or key file now discards the saved secret unless a new one is entered.** Previously only an auth-method switch cleared it, so changing an address or login could silently send the old server's password to a different destination. In the upcoming portable build a destination change instead detaches the host from the profile's shared secret under a fresh credential identity — other copies of the profile keep access to the original server. Editing anything else (name, group, note, guard/history settings, jump host) keeps the secret; entering a new password/passphrase alone updates it for every copy. The host form explains the reset under the auth-method switch.
+
 ### Added
 
 - **Host credential identity for the upcoming portable build (NFR-05).** Every host record in `hosts.db` now carries a permanent random `credentialId` (migration v4; new and imported hosts get a fresh one, edits keep it). The installed build still addresses saved secrets as `LucidSSH/{hostId}` with no secret-store migration; a portable profile will address them as `LucidSSH/{profileId}/{credentialId}`, so hosts copied along with the profile keep their shared secret on the same PC, while independently created hosts with coinciding numeric ids get isolated secrets. `credentialId` stays in the main process — it never enters the renderer host model, export/import, `AppInfo`, or logs.

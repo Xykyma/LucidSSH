@@ -172,6 +172,12 @@ vi.mock('../keychain', () => ({
   deleteSecret: vi.fn()
 }));
 
+vi.mock('../startup/profileIdentity', () => ({
+  // Тикет 05: по умолчанию — установленная версия (profileId null);
+  // portable-кейсы переопределяют через mockGetProfileId.mockReturnValue.
+  getProfileId: vi.fn(() => null)
+}));
+
 vi.mock('../ssh/hostKeyDecision', () => ({
   applyHostKeyDecision: vi.fn()
 }));
@@ -226,6 +232,10 @@ vi.mock('../hosts/repository', () => ({
   createHost: vi.fn(),
   updateHost: vi.fn(),
   deleteHost: vi.fn(),
+  setHostCredentialId: vi.fn(),
+  // Атомарность «ротация + поля» в hosts:update (тикет 05) — на стенде
+  // транзакция выполняет колбэк, как настоящая.
+  runInTransaction: vi.fn((fn: () => unknown) => fn()),
   reorderHosts: vi.fn(),
   findHostByAddressPort: vi.fn(),
   hostExists: vi.fn(),
@@ -268,6 +278,7 @@ import * as winscpImportModule from '../hosts/winscpImport';
 import * as keychainModule from '../keychain';
 import { SecretStoreUnavailableError } from '../keychain/errors';
 import { SECRET_STORE_UNAVAILABLE } from '@shared/hosts';
+import * as profileIdentityModule from '../startup/profileIdentity';
 import * as hostKeyDecisionModule from '../ssh/hostKeyDecision';
 import * as keygenModule from '../ssh/keygen';
 import * as knownHostsModule from '../ssh/knownHosts';
@@ -375,6 +386,7 @@ const MOCKED_MODULES: unknown[] = [
   sshConfigImportModule,
   winscpImportModule,
   keychainModule,
+  profileIdentityModule,
   hostKeyDecisionModule,
   keygenModule,
   knownHostsModule,
@@ -486,6 +498,9 @@ beforeEach(() => {
     hostId: id,
     credentialId: `cred-${id}`
   }));
+  // Дефолт — установленная версия; portable-кейсы тикета 05 переопределяют
+  // (mockReturnValue сбрасывался бы между тестами не полностью — держим тут).
+  vi.mocked(profileIdentityModule.getProfileId).mockReturnValue(null);
 });
 
 describe('регистрация каналов', () => {
@@ -1148,6 +1163,210 @@ describe('сохранённый секрет используется толь�
 
       expect(mockGetSecret).not.toHaveBeenCalled();
       expect(mockTest).toHaveBeenCalledWith(expect.anything(), 'fresh', 7);
+    });
+  });
+});
+
+describe('смена SSH-назначения и сохранённый секрет (тикет 05)', () => {
+  const mockGetHost = vi.mocked(hostsRepositoryModule.getHost);
+  const mockUpdateHost = vi.mocked(hostsRepositoryModule.updateHost);
+  const mockSetHostCredentialId = vi.mocked(hostsRepositoryModule.setHostCredentialId);
+  const mockSetSecret = vi.mocked(keychainModule.setSecret);
+  const mockDeleteSecret = vi.mocked(keychainModule.deleteSecret);
+  const mockGetProfileId = vi.mocked(profileIdentityModule.getProfileId);
+
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  // Каждое поле назначения: заплатка к валидному вводу меняет ровно его.
+  const DESTINATION_FIELDS: Array<[string, Record<string, unknown>, Partial<Host>]> = [
+    ['address', { address: '10.0.0.2' }, {}],
+    ['port', { port: 2222 }, {}],
+    ['username', { username: 'admin' }, {}],
+    ['authMethod', { authMethod: 'key', keyPath: 'C:\\keys\\id' }, {}],
+    ['keyPath', { authMethod: 'key', keyPath: 'C:\\keys\\other' }, { authMethod: 'key', keyPath: 'C:\\keys\\id' }]
+  ];
+
+  const portable = (): void => {
+    mockGetProfileId.mockReturnValue('profile-1');
+  };
+
+  describe('установленная версия (profileId null)', () => {
+    it.each(DESTINATION_FIELDS)(
+      'смена %s без нового секрета — прежний удалён до updateHost, идентичность прежняя',
+      async (_field, patch, hostPatch) => {
+        mockGetHost.mockReturnValue(fakeHost({ id: 7, ...hostPatch }));
+
+        const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(patch), undefined);
+
+        expect(result.ok).toBe(true);
+        expect(mockDeleteSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' });
+        expect(mockSetSecret).not.toHaveBeenCalled();
+        expect(mockSetHostCredentialId).not.toHaveBeenCalled();
+        expect(mockUpdateHost).toHaveBeenCalledWith(7, expect.anything());
+        expect(mockDeleteSecret.mock.invocationCallOrder[0]).toBeLessThan(
+          mockUpdateHost.mock.invocationCallOrder[0] ?? 0
+        );
+      }
+    );
+
+    it.each(DESTINATION_FIELDS)(
+      'смена %s с новым секретом — секрет заменён под прежней идентичностью, не удалён',
+      async (_field, patch, hostPatch) => {
+        mockGetHost.mockReturnValue(fakeHost({ id: 7, ...hostPatch }));
+
+        const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(patch), 'newpass');
+
+        expect(result.ok).toBe(true);
+        expect(mockSetSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' }, 'newpass');
+        expect(mockDeleteSecret).not.toHaveBeenCalled();
+        expect(mockSetHostCredentialId).not.toHaveBeenCalled();
+        expect(mockUpdateHost).toHaveBeenCalledWith(7, expect.anything());
+      }
+    );
+
+    it('отказ deleteSecret при смене назначения — updateHost не вызван, запись прежняя', async () => {
+      mockGetHost.mockReturnValue(fakeHost({ id: 7 }));
+      mockDeleteSecret.mockRejectedValueOnce(new Error('no keychain'));
+
+      const result = await invoke(
+        IPC.hostUpdate,
+        mainEvent(),
+        7,
+        validHostInput({ address: '10.0.0.2' }),
+        undefined
+      );
+
+      expect(result.ok).toBe(false);
+      expect(mockUpdateHost).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('portable-профиль', () => {
+    beforeEach(() => {
+      portable();
+    });
+
+    it.each(DESTINATION_FIELDS)(
+      'смена %s без нового секрета — новый credentialId, общий секрет не тронут',
+      async (_field, patch, hostPatch) => {
+        mockGetHost.mockReturnValue(fakeHost({ id: 7, ...hostPatch }));
+
+        const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(patch), undefined);
+
+        expect(result.ok).toBe(true);
+        expect(mockSetSecret).not.toHaveBeenCalled();
+        expect(mockDeleteSecret).not.toHaveBeenCalled();
+        // Отсоединение от общего секрета копий: новая идентичность, прежняя
+        // запись в Хранилище не адресуется и не удаляется.
+        expect(mockSetHostCredentialId).toHaveBeenCalledTimes(1);
+        const [rotatedId, rotatedCred] = mockSetHostCredentialId.mock.calls[0] as [number, string];
+        expect(rotatedId).toBe(7);
+        expect(rotatedCred).toMatch(UUID_RE);
+        expect(rotatedCred).not.toBe('cred-7');
+        expect(mockUpdateHost).toHaveBeenCalledWith(7, expect.anything());
+      }
+    );
+
+    it.each(DESTINATION_FIELDS)(
+      'смена %s с новым секретом — секрет сохранён под новой идентичностью, прежний не тронут',
+      async (_field, patch, hostPatch) => {
+        mockGetHost.mockReturnValue(fakeHost({ id: 7, ...hostPatch }));
+
+        const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(patch), 'newpass');
+
+        expect(result.ok).toBe(true);
+        expect(mockDeleteSecret).not.toHaveBeenCalled();
+        expect(mockSetSecret).toHaveBeenCalledTimes(1);
+        const [cred, sec] = mockSetSecret.mock.calls[0] as [
+          { hostId: number; credentialId: string },
+          string
+        ];
+        expect(cred.hostId).toBe(7);
+        expect(cred.credentialId).toMatch(UUID_RE);
+        expect(cred.credentialId).not.toBe('cred-7');
+        expect(sec).toBe('newpass');
+        // Запись секрета — до смены идентичности: упавшее Хранилище оставило
+        // бы запись хоста (включая credentialId) прежней.
+        expect(mockSetSecret.mock.invocationCallOrder[0]).toBeLessThan(
+          mockSetHostCredentialId.mock.invocationCallOrder[0] ?? Infinity
+        );
+        expect(mockSetHostCredentialId).toHaveBeenCalledWith(7, cred.credentialId);
+        expect(mockUpdateHost).toHaveBeenCalledWith(7, expect.anything());
+      }
+    );
+
+    it('отказ setSecret при смене назначения — запись и общий секрет прежние', async () => {
+      mockGetHost.mockReturnValue(fakeHost({ id: 7 }));
+      mockSetSecret.mockRejectedValueOnce(new Error('no keychain'));
+
+      const result = await invoke(
+        IPC.hostUpdate,
+        mainEvent(),
+        7,
+        validHostInput({ address: '10.0.0.2' }),
+        'newpass'
+      );
+
+      expect(result.ok).toBe(false);
+      expect(mockUpdateHost).not.toHaveBeenCalled();
+      expect(mockSetHostCredentialId).not.toHaveBeenCalled();
+      // Общий секрет копий не удаляется даже при отказе записи нового.
+      expect(mockDeleteSecret).not.toHaveBeenCalled();
+    });
+
+    it('явная смена только секрета без смены назначения — прежний credentialId, общий секрет обновлён', async () => {
+      mockGetHost.mockReturnValue(fakeHost({ id: 7 }));
+
+      const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(), 'newpass');
+
+      expect(result.ok).toBe(true);
+      expect(mockSetSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' }, 'newpass');
+      expect(mockSetHostCredentialId).not.toHaveBeenCalled();
+      expect(mockDeleteSecret).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('не-назначение: идентичность и секрет сохраняются', () => {
+    beforeEach(() => {
+      // Реализации vi.fn живут между тестами (clearAllMocks не сбрасывает):
+      // ранее в файле checkJumpHost возвращал 'self'.
+      vi.mocked(hostsRepositoryModule.checkJumpHost).mockReturnValue(null);
+      vi.mocked(hostsRepositoryModule.groupExists).mockReturnValue(true);
+    });
+
+    const NON_DESTINATION: Array<[string, Record<string, unknown>]> = [
+      ['имени', { name: 'srv2' }],
+      ['группы', { groupId: 5 }],
+      ['настроек Стража', { guardEnabled: false }],
+      ['настроек истории', { historyEnabled: false }],
+      ['jump-хоста', { proxyJumpHostId: 3 }]
+    ];
+
+    it.each(NON_DESTINATION)(
+      'установленная: смена %s без секрета — keychain не тронут, идентичность прежняя',
+      async (_what, patch) => {
+        mockGetHost.mockReturnValue(fakeHost({ id: 7 }));
+
+        const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(patch), undefined);
+
+        expect(result.ok).toBe(true);
+        expect(mockSetSecret).not.toHaveBeenCalled();
+        expect(mockDeleteSecret).not.toHaveBeenCalled();
+        expect(mockSetHostCredentialId).not.toHaveBeenCalled();
+        expect(mockUpdateHost).toHaveBeenCalledWith(7, expect.anything());
+      }
+    );
+
+    it('portable: не-назначение с новым секретом — прежняя идентичность, общий секрет обновлён', async () => {
+      portable();
+      mockGetHost.mockReturnValue(fakeHost({ id: 7 }));
+
+      const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput({ name: 'srv2' }), 'newpass');
+
+      expect(result.ok).toBe(true);
+      expect(mockSetSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' }, 'newpass');
+      expect(mockSetHostCredentialId).not.toHaveBeenCalled();
+      expect(mockDeleteSecret).not.toHaveBeenCalled();
     });
   });
 });

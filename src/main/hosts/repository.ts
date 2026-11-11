@@ -161,6 +161,17 @@ export function getHostCredential(id: number): HostCredential | null {
   return row ? { hostId: row.id, credentialId: row.credential_id } : null;
 }
 
+/**
+ * Смена идентичности секрета при смене SSH-назначения (тикет 05). Вызывать
+ * ПОСЛЕ успешной записи секрета под новой идентичностью: отказ Хранилища
+ * обязан оставить запись хоста (включая credentialId) прежней. Новый UUID
+ * генерирует вызывающий (main/ipc/hosts.ts) — адрес новой записи нужен до
+ * того, как строка об этом узнает.
+ */
+export function setHostCredentialId(id: number, credentialId: string): void {
+  openHostsDb().prepare('UPDATE hosts SET credential_id = ? WHERE id = ?').run(credentialId, id);
+}
+
 /** Порядок хостов внутри группы (drag-and-drop в сайдбаре). */
 export function reorderHosts(orderedIds: number[]): void {
   const db = openHostsDb();

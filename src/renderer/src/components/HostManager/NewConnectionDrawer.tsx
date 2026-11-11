@@ -477,6 +477,9 @@ export function NewConnectionDrawer(): JSX.Element | null {
                 </button>
               ))}
             </div>
+            {editHost && showHints && (
+              <div className={`${helper} mt-2`}>{t('conn.destinationSecretReset')}</div>
+            )}
           </div>
 
           {form.authMethod === 'password' ? (
