@@ -15,19 +15,29 @@ concurrency:
 jobs:
   check:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
-      # No rebuild step: a clean `npm ci` builds better-sqlite3/keytar against
-      # the Node ABI, which is what vitest needs (see CLAUDE.md §9).
+      # Tests run against the Node ABI (CLAUDE.md §9); packaging below needs
+      # the Electron ABI, hence the rebuild step after `npm test`.
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      - run: npm run rebuild:app
+      - run: npm run dist -- --win --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lucidssh-windows
+          path: |
+            release/LucidSSH-Setup-*.exe
+            release/LucidSSH-Portable-*.exe
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
 
   build-linux:
     runs-on: ubuntu-latest
