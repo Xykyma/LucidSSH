@@ -22,24 +22,25 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      # Tests run against the Node ABI (CLAUDE.md §9); packaging below needs
-      # the Electron ABI, hence the rebuild step after `npm test`.
+      # Tests run against the Node ABI (CLAUDE.md §9); packaging needs the
+      # Electron ABI, hence the rebuild step after `npm test`.
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
-      - run: npm run rebuild:app
-      - run: npm run dist -- --win --publish never
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lucidssh-windows
-          path: |
-            release/LucidSSH-Setup-*.exe
-            release/LucidSSH-Portable-*.exe
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
+      - if: github.event_name == 'pull_request'
+        run: npm run rebuild:app
+      - if: github.event_name == 'pull_request'
+        run: npm run dist -- --win --publish never
+      - name: Verify Windows packages (NSIS Setup + Portable)
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path release/LucidSSH-Setup-*.exe)) { throw "NSIS Setup exe not found" }
+          if (-not (Test-Path release/LucidSSH-Portable-*.exe)) { throw "Portable exe not found" }
 
   build-linux:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -54,11 +55,5 @@ jobs:
       # Native modules must match the Electron ABI for packaging (CLAUDE.md §9).
       - run: npm run rebuild:app
       - run: npm run dist -- --linux --publish never
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lucidssh-linux
-          path: |
-            release/*.AppImage
-            release/*.deb
-            release/latest-linux.yml
-          retention-days: ${{ github.event_name == 'push' && 30 || 7 }}
+      - name: Verify Linux packages (AppImage + DEB)
+        run: ls release/*.AppImage release/*.deb
