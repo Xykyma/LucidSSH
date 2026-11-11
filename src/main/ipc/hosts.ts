@@ -1,4 +1,5 @@
 import { dialog, ipcMain, shell } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { IPC } from '@shared/ipc';
 import type { Host, HostGroup, ImportPreview } from '@shared/hosts';
@@ -32,6 +33,7 @@ import type { ExternalImportApplyResult, ExternalImportResult, ImportedHost } fr
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getMainWindow } from '../window/mainWindow';
+import { getProfileId } from '../startup/profileIdentity';
 import { assertSenderIsMainWindow, IpcValidationError } from './validate';
 import { t } from '../i18n';
 
@@ -122,17 +124,45 @@ export function registerHostIpcHandlers(): void {
         const rejection = repo.checkJumpHost(input.proxyJumpHostId, id);
         if (rejection) throw new IpcValidationError(`proxyJumpHostId: ${rejection}`);
       }
-      // В keychain один нетипизированный секрет на хост: после смены метода
-      // без нового секрета старая passphrase ушла бы серверу как пароль (и
-      // наоборот). Удаляем — следующее подключение спросит заново (SEC-01).
-      // До updateHost: упавший keychain не оставит новый метод со старым секретом.
-      // getHost выше подтвердил строку — идентичность здесь не null.
+      // Смена SSH-назначения (тикет 05): адрес, порт, логин, метод или ключ —
+      // независимо от того, какие поля показал renderer. Остальное (имя,
+      // группа, заметка, Страж/история, сортировка, jump-хост) идентичность
+      // и секрет сохраняют. getHost выше подтвердил строку — идентичность
+      // здесь не null.
       const credential = repo.getHostCredential(id)!;
-      if (secret === undefined && input.authMethod !== existing.authMethod) {
-        await keychain.deleteSecret(credential);
+      const destinationChanged =
+        input.address !== existing.address ||
+        input.port !== existing.port ||
+        input.username !== existing.username ||
+        input.authMethod !== existing.authMethod ||
+        (input.keyPath ?? null) !== (existing.keyPath ?? null);
+      if (!destinationChanged) {
+        // Явная смена только секрета: идентичность прежняя — обновляется
+        // общий секрет всех копий профиля (тикет 04/05).
+        if (secret !== undefined) await keychain.setSecret(credential, secret);
+      } else if (getProfileId() !== null) {
+        // Portable: новый credentialId отсоединяет запись от общего секрета
+        // копий — прежний не перезаписывается и не удаляется. Секрет пишется
+        // до смены идентичности: упавшее Хранилище оставляет запись хоста
+        // (включая credentialId) и общий секрет прежними. Ротация и поля —
+        // в одной транзакции: сбой БД не должен оставить прежнее назначение
+        // с новой идентичностью (молчаливая потеря общего секрета копий).
+        const fresh = { hostId: id, credentialId: randomUUID() };
+        if (secret !== undefined) await keychain.setSecret(fresh, secret);
+        repo.runInTransaction(() => {
+          repo.setHostCredentialId(id, fresh.credentialId);
+          repo.updateHost(id, input);
+        });
+        return;
+      } else {
+        // Установленная версия: прежний секрет не может быть отправлен
+        // изменённому назначению (в keychain один нетипизированный секрет на
+        // хост — старая passphrase ушла бы серверу как пароль, SEC-01). Всё —
+        // до updateHost: упавший keychain не оставит новое назначение со
+        // старым секретом, а следующее подключение спросит секрет заново.
+        if (secret === undefined) await keychain.deleteSecret(credential);
+        else await keychain.setSecret(credential, secret);
       }
-      // Новый секрет — до updateHost: если keychain упал, строка хоста осталась прежней.
-      if (secret !== undefined) await keychain.setSecret(credential, secret);
       repo.updateHost(id, input);
     }
   );

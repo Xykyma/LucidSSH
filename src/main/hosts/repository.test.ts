@@ -484,4 +484,19 @@ describe('миграция v4 — credential_id (Идентичность сек
     expect(importedCredential).toMatch(UUID_V4_RE);
     expect(importedCredential).not.toBe(sourceCredential);
   });
+
+  it('setHostCredentialId: смена SSH-назначения получает новую идентичность (тикет 05)', async () => {
+    const repo = await freshRepo();
+    const id = repo.createHost({ ...base, name: 'web-01' });
+    const before = repo.getHostCredential(id)!;
+
+    repo.setHostCredentialId(id, '11111111-2222-4333-8444-555555555555');
+
+    const after = repo.getHostCredential(id)!;
+    expect(after.hostId).toBe(id);
+    expect(after.credentialId).toBe('11111111-2222-4333-8444-555555555555');
+    expect(after.credentialId).not.toBe(before.credentialId);
+    // Остальные поля записи трогать не нужно — updateHost идёт отдельно.
+    expect(repo.getHost(id)?.name).toBe('web-01');
+  });
 });
