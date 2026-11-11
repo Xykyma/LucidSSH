@@ -901,5 +901,11 @@
       "title": "Portable profile is not writable",
       "message": "The portable profile cannot safely save its data: {{file}} is not writable. To avoid losing settings, hosts, history, and trusted keys, the app will not start and will not run without saving. Check write permissions (or move the LucidSSH folder to another location) and launch the app again."
     }
+  },
+  "portableWarning": {
+    "title": "Passwords are stored separately from the portable profile",
+    "body": "Settings, hosts, history, and trusted server keys are stored next to the app. Passwords and passphrases are not part of the profile folder and stay in the Windows Credential Store: after moving to another PC they may need to be entered again. Private SSH key files are not copied either — they are used from their original paths. Profile files are not encrypted: if the drive is lost, hosts and history may become visible to other people.",
+    "ok": "Got it",
+    "error": "Could not save the confirmation. Make sure the profile folder is writable and press \"Got it\" again."
   }
 }

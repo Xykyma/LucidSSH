@@ -152,6 +152,32 @@ describe('resetConfig (SET-08)', () => {
     expect(fresh.history.saveOutput).toBe(false); // HIST-09: opt-in
     expect(fresh.updates.autoCheck).toBe(true);
   });
+
+  it('не сбрасывает отметку стартового предупреждения portable-профиля (NFR-05, тикет 06)', async () => {
+    const { loadConfig, updateConfig, resetConfig } = await freshStore();
+    loadConfig();
+    updateConfig((cfg) => {
+      cfg.portableWarningAcknowledged = true; // Внутреннее состояние
+      cfg.ui.expertMode = true; // пользовательская настройка
+    });
+    const fresh = resetConfig();
+    expect(fresh.portableWarningAcknowledged).toBe(true);
+    expect(fresh.ui.expertMode).toBe(false);
+    const onDisk = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));
+    expect(onDisk.portableWarningAcknowledged).toBe(true);
+  });
+
+  it('отметка переживает перезапуск: свежий модуль (чистый кэш) читает её из config.json (тикет 06)', async () => {
+    const first = await freshStore();
+    first.loadConfig();
+    first.updateConfig((cfg) => {
+      cfg.portableWarningAcknowledged = true;
+    });
+    // Перенос папки профиля меняет только путь (configDir), не содержимое
+    // файла — он же читается в новой локации, поэтому достаточно перечитывания.
+    const second = await freshStore();
+    expect(second.loadConfig().portableWarningAcknowledged).toBe(true);
+  });
 });
 
 describe('projectSettings', () => {

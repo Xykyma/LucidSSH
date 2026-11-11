@@ -83,6 +83,11 @@ export interface AppState {
   updates: {
     source: string;
   };
+  /** NFR-05 (тикет 06): пользователь подтвердил стартовое предупреждение
+   *  переносимого профиля. Внутреннее состояние — в renderer-проекцию не
+   *  входит и сбросом настроек (SET-08) не сбрасывается. Смена ПК специально
+   *  не определяется: отметка переживает перенос папки. */
+  portableWarningAcknowledged: boolean;
 }
 
 /** Форма файла на диске — этим разрезом не меняется. */
@@ -114,7 +119,8 @@ export function projectState(cfg: AppConfig): AppState {
     language: cfg.language,
     window: cfg.window,
     pendingKeyDeployments: cfg.pendingKeyDeployments,
-    updates: { source: cfg.updates.source }
+    updates: { source: cfg.updates.source },
+    portableWarningAcknowledged: cfg.portableWarningAcknowledged
   };
 }
 

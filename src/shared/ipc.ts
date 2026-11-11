@@ -16,6 +16,9 @@ export const IPC = {
   appOpenReleasesPage: 'app:open-releases-page', // §9.1 Release_and_Update_Strategy.md — ссылка на SHA-256 в About; переиспользуется и для «Список изменений» (SET-09) — тот же GitHub Releases
   appOpenBugReport: 'app:open-bug-report', // SET-09
   appOpenFeatureRequest: 'app:open-feature-request', // SET-09
+  // NFR-05 (тикет 06): подтверждение стартового предупреждения текущего
+  // portable-профиля. Без аргументов; ничего, кроме отметки, не делает.
+  portableWarningConfirm: 'portable-warning:confirm',
 
   // --- Буфер обмена (через main, renderer без clipboard-permission) ---
   clipboardRead: 'clipboard:read',
@@ -158,6 +161,11 @@ export const IPC = {
 export interface AppInfo {
   version: string;
   language: string;
+  /** NFR-05 (тикет 06): признак portable-сборки и необходимость показа
+   *  стартового предупреждения. Путь профиля, profileId и credentialId сюда
+   *  не добавляются — renderer их не получает. */
+  portable: boolean;
+  portableWarningRequired: boolean;
 }
 
 /**
