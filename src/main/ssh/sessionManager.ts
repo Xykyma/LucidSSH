@@ -4,7 +4,7 @@ import type { ConnectionLogEntry, SessionStatus } from '@shared/ssh';
 import { IPC } from '@shared/ipc';
 import type { Host } from '@shared/hosts';
 import { QUICK_CONNECT_HOST_ID } from '@shared/quickConnect';
-import { getHost } from '../hosts/repository';
+import { getHost, getHostCredential } from '../hosts/repository';
 import { getSecretForConnection } from '../keychain';
 import { loadConfig } from '../config/store';
 import { emit } from '../ipc/events';
@@ -571,10 +571,12 @@ async function connectWithCredentials(
   opts: AttemptOptions
 ): Promise<boolean> {
   // Секрет достаётся из Credential Manager непосредственно перед подключением
-  // и не сохраняется в объекте сессии (§9.9 гайда).
+  // и не сохраняется в объекте сессии (§9.9 гайда). Адрес записи — полная
+  // идентичность записи (NFR-05, тикет 04), не один числовой id.
   let secret: string | null;
   try {
-    secret = await getSecretForConnection(host.id);
+    const credential = getHostCredential(host.id);
+    secret = credential ? await getSecretForConnection(credential) : null;
   } catch {
     secret = null;
   }

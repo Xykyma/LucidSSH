@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Host credential identity for the upcoming portable build (NFR-05).** Every host record in `hosts.db` now carries a permanent random `credentialId` (migration v4; new and imported hosts get a fresh one, edits keep it). The installed build still addresses saved secrets as `LucidSSH/{hostId}` with no secret-store migration; a portable profile will address them as `LucidSSH/{profileId}/{credentialId}`, so hosts copied along with the profile keep their shared secret on the same PC, while independently created hosts with coinciding numeric ids get isolated secrets. `credentialId` stays in the main process — it never enters the renderer host model, export/import, `AppInfo`, or logs.
+
 ## [1.0.3] — 2026-10-23
 
 ### Changed

@@ -9,7 +9,7 @@ import type { Host } from '@shared/hosts';
 // `.scratch/shell-integration-session/spec.md`: seam ограничен attemptConnect
 // и фабрикой Client, establish()/hosts/keychain НЕ подменяются, а собираются
 // тестом вручную — см. Testing Decisions). Мокаем по образцу guard/manager.test.ts.
-vi.mock('../hosts/repository', () => ({ getHost: vi.fn() }));
+vi.mock('../hosts/repository', () => ({ getHost: vi.fn(), getHostCredential: vi.fn() }));
 vi.mock('../keychain', () => ({ getSecretForConnection: vi.fn() }));
 vi.mock('../config/store', () => ({ loadConfig: vi.fn(), updateConfig: vi.fn() }));
 vi.mock('../window/mainWindow', () => ({ getMainWindow: vi.fn(() => null) }));
@@ -40,7 +40,7 @@ import { loadConfig } from '../config/store';
 import { startDashboard } from './dashboard';
 import { getMainWindow } from '../window/mainWindow';
 import { getSecretForConnection } from '../keychain';
-import { getHost } from '../hosts/repository';
+import { getHost, getHostCredential } from '../hosts/repository';
 import { addKnownKey } from './knownHosts';
 import {
   answerAuthPrompt,
@@ -60,7 +60,15 @@ const mockStartDashboard = vi.mocked(startDashboard);
 const mockGetMainWindow = vi.mocked(getMainWindow);
 const mockGetSecretForConnection = vi.mocked(getSecretForConnection);
 const mockGetHost = vi.mocked(getHost);
+const mockGetHostCredential = vi.mocked(getHostCredential);
 const mockAddKnownKey = vi.mocked(addKnownKey);
+
+// connectWithCredentials читает секрет по полной идентичности записи (NFR-05,
+// тикет 04): для любого существующего getHost-хоста идентичность определена.
+mockGetHostCredential.mockImplementation((id: number) => ({
+  hostId: id,
+  credentialId: `cred-${id}`
+}));
 
 const fakeConfig = (): AppConfig =>
   ({
@@ -598,7 +606,9 @@ describe('подключение через jump-хост (SSH-05)', () => {
   it('повтор пароля на целевом хосте берёт новый канал через bastion, а не отработавший', async () => {
     // Пароль целевого хоста не сохранён — вход идёт через запрос в терминале
     // (SSH-06), и первая попытка «промахивается».
-    mockGetSecretForConnection.mockImplementation(async (id: number) => (id === 2 ? 'pw' : null));
+    mockGetSecretForConnection.mockImplementation(async (key: { hostId: number }) =>
+      key.hostId === 2 ? 'pw' : null
+    );
     const prompts: Array<{ requestId: string }> = [];
     mockGetMainWindow.mockReturnValue({
       isDestroyed: () => false,

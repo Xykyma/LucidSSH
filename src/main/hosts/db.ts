@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DASHBOARD_ALERT_ISSUES } from '@shared/dashboard';
@@ -109,6 +110,19 @@ const MIGRATIONS: MigrationStep[] = [
       if (!existingIds.has(hostId)) continue;
       for (const issue of issues) insert.run(hostId, issue);
     }
+  },
+  // v4 — Идентичность секрета хоста (NFR-05, тикет 04): каждой записи —
+  // постоянный случайный credential_id. В portable-профиле он — часть адреса
+  // записи Хранилища секретов (profileId + credentialId): скопированная БД
+  // сохраняет общий секрет на том же ПК, а одинаковые числовые id в разных
+  // профилях и копиях не встречаются с чужими записями. Установленная версия
+  // адресует записи по-прежнему через hosts.id и колонку не использует.
+  (db) => {
+    db.exec("ALTER TABLE hosts ADD COLUMN credential_id TEXT NOT NULL DEFAULT ''");
+    const rows = db.prepare('SELECT id FROM hosts').all() as Array<{ id: number }>;
+    const assign = db.prepare('UPDATE hosts SET credential_id = ? WHERE id = ?');
+    for (const row of rows) assign.run(randomUUID(), row.id);
+    db.exec('CREATE UNIQUE INDEX idx_hosts_credential_id ON hosts(credential_id)');
   }
 ];
 

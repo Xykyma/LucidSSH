@@ -2,7 +2,7 @@ import type { ClientChannel } from 'ssh2';
 import type { AuthMethod, HostInput } from '@shared/hosts';
 import type { TestConnectionResult } from '@shared/ssh';
 import { loadPrivateKey, PrivateKeyError } from './keys';
-import { getHost } from '../hosts/repository';
+import { getHost, getHostCredential } from '../hosts/repository';
 import { getSecretForConnection } from '../keychain';
 import { openConnection, type Connection, type ConnectionCredentials } from './connection';
 import { forwardOut } from './forwardOut';
@@ -61,7 +61,10 @@ export async function testConnection(
 
     let bastionSecret: string | undefined;
     try {
-      bastionSecret = (await getSecretForConnection(bastion.id)) ?? undefined;
+      const bastionCredential = getHostCredential(bastion.id);
+      bastionSecret = bastionCredential
+        ? ((await getSecretForConnection(bastionCredential)) ?? undefined)
+        : undefined;
     } catch {
       bastionSecret = undefined;
     }

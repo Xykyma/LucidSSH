@@ -222,6 +222,7 @@ vi.mock('../updates/updater', () => ({
 vi.mock('../hosts/repository', () => ({
   listHosts: vi.fn(),
   getHost: vi.fn(),
+  getHostCredential: vi.fn(),
   createHost: vi.fn(),
   updateHost: vi.fn(),
   deleteHost: vi.fn(),
@@ -479,6 +480,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetMainWindow.mockReturnValue(fakeMainWindow as unknown as BrowserWindow);
   configFixture.cfg = createConfigFixture();
+  // Дефолтная идентичность секрета (NFR-05, тикет 04): любой id, прошедший
+  // проверку существования, адресуется. Тесты точечно переопределяют.
+  vi.mocked(hostsRepositoryModule.getHostCredential).mockImplementation((id: number) => ({
+    hostId: id,
+    credentialId: `cred-${id}`
+  }));
 });
 
 describe('регистрация каналов', () => {
@@ -645,7 +652,7 @@ describe('пункт 3 — hostDelete без force не удаляет', () => {
 
     expect(result).toEqual({ ok: true, value: { deleted: true } });
     expect(mockDeleteHost).toHaveBeenCalledWith(1);
-    expect(mockDeleteSecret).toHaveBeenCalledWith(1);
+    expect(mockDeleteSecret).toHaveBeenCalledWith({ hostId: 1, credentialId: 'cred-1' });
   });
 });
 
@@ -906,14 +913,14 @@ describe('пункт 6 — hostCreate/hostUpdate не пишут при отка
       expect(mockSetSecret).not.toHaveBeenCalled();
     });
 
-    it('валидный ввод с секретом — createHost, затем setSecret(id, secret) (контроль)', async () => {
+    it('валидный ввод с секретом — createHost, затем setSecret(идентичность, secret) (контроль)', async () => {
       mockCreateHost.mockReturnValue(42);
 
       const result = await invoke(IPC.hostCreate, mainEvent(), validHostInput(), 's3cr3t');
 
       expect(result).toEqual({ ok: true, value: { id: 42 } });
       expect(mockCreateHost).toHaveBeenCalledTimes(1);
-      expect(mockSetSecret).toHaveBeenCalledWith(42, 's3cr3t');
+      expect(mockSetSecret).toHaveBeenCalledWith({ hostId: 42, credentialId: 'cred-42' }, 's3cr3t');
     });
   });
 
@@ -950,7 +957,7 @@ describe('пункт 6 — hostCreate/hostUpdate не пишут при отка
       expect(first.ok).toBe(false);
       expect(second.ok).toBe(true);
       expect([...db]).toEqual([2]);
-      expect(mockSetSecret).toHaveBeenLastCalledWith(2, 's3cr3t');
+      expect(mockSetSecret).toHaveBeenLastCalledWith({ hostId: 2, credentialId: 'cred-2' }, 's3cr3t');
     });
   });
 
@@ -1014,14 +1021,14 @@ describe('пункт 6 — hostCreate/hostUpdate не пишут при отка
       expect(mockSetSecret).not.toHaveBeenCalled();
     });
 
-    it('валидный ввод с секретом — updateHost, затем setSecret(id, secret) (контроль)', async () => {
+    it('валидный ввод с секретом — updateHost, затем setSecret(идентичность, secret) (контроль)', async () => {
       mockGetHost.mockReturnValue(fakeHost({ id: 7 }));
 
       const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(), 's3cr3t');
 
       expect(result).toEqual({ ok: true, value: undefined });
       expect(mockUpdateHost).toHaveBeenCalledTimes(1);
-      expect(mockSetSecret).toHaveBeenCalledWith(7, 's3cr3t');
+      expect(mockSetSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' }, 's3cr3t');
     });
   });
 });
@@ -1040,7 +1047,7 @@ describe('сохранённый секрет используется толь�
       const result = await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(), undefined);
 
       expect(result.ok).toBe(true);
-      expect(mockDeleteSecret).toHaveBeenCalledWith(7);
+      expect(mockDeleteSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' });
       expect(mockSetSecret).not.toHaveBeenCalled();
     });
 
@@ -1056,7 +1063,7 @@ describe('сохранённый секрет используется толь�
       );
 
       expect(result.ok).toBe(true);
-      expect(mockDeleteSecret).toHaveBeenCalledWith(7);
+      expect(mockDeleteSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' });
     });
 
     it('смена метода с новым секретом — секрет перезаписан, не удалён (контроль)', async () => {
@@ -1064,7 +1071,7 @@ describe('сохранённый секрет используется толь�
 
       await invoke(IPC.hostUpdate, mainEvent(), 7, validHostInput(), 'newpass');
 
-      expect(mockSetSecret).toHaveBeenCalledWith(7, 'newpass');
+      expect(mockSetSecret).toHaveBeenCalledWith({ hostId: 7, credentialId: 'cred-7' }, 'newpass');
       expect(mockDeleteSecret).not.toHaveBeenCalled();
     });
 

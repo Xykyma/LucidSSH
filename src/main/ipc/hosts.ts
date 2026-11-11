@@ -91,10 +91,11 @@ export function registerHostIpcHandlers(): void {
       const id = repo.createHost(input);
       if (secret !== undefined) {
         try {
-          await keychain.setSecret(id, secret);
+          // Строка только что создана — идентичность секрета есть всегда.
+          await keychain.setSecret(repo.getHostCredential(id)!, secret);
         } catch (err) {
-          // Ключ keychain — id хоста, поэтому секрет первым не записать: откатываем
-          // строку, иначе повтор «Сохранить» создаст дубликат без секрета.
+          // Ключ keychain — идентичность записи, поэтому секрет первым не записать:
+          // откатываем строку, иначе повтор «Сохранить» создаст дубликат без секрета.
           // Отказ хранилища (SecretStoreUnavailableError) идёт дальше как есть:
           // его message — маркер для renderer.
           repo.deleteHost(id);
@@ -125,11 +126,13 @@ export function registerHostIpcHandlers(): void {
       // без нового секрета старая passphrase ушла бы серверу как пароль (и
       // наоборот). Удаляем — следующее подключение спросит заново (SEC-01).
       // До updateHost: упавший keychain не оставит новый метод со старым секретом.
+      // getHost выше подтвердил строку — идентичность здесь не null.
+      const credential = repo.getHostCredential(id)!;
       if (secret === undefined && input.authMethod !== existing.authMethod) {
-        await keychain.deleteSecret(id);
+        await keychain.deleteSecret(credential);
       }
       // Новый секрет — до updateHost: если keychain упал, строка хоста осталась прежней.
-      if (secret !== undefined) await keychain.setSecret(id, secret);
+      if (secret !== undefined) await keychain.setSecret(credential, secret);
       repo.updateHost(id, input);
     }
   );
@@ -149,6 +152,9 @@ export function registerHostIpcHandlers(): void {
         if (dependents.length > 0) return { deleted: false, dependents };
       }
       const host = repo.getHost(id);
+      // Идентичность секрета — до удаления строки: после неё адресовать
+      // запись Хранилища нечем (NFR-05, тикет 04).
+      const credential = repo.getHostCredential(id);
       // Каскад (history_enabled со строкой хоста, host_dismissed_alerts через
       // ON DELETE CASCADE) берёт на себя СУБД — hosts.db, foreign_keys=ON
       // (.scratch/host-scoped-flags-to-db).
@@ -156,10 +162,12 @@ export function registerHostIpcHandlers(): void {
       // Секрет удаляется вместе с хостом (§10 гайда). Отказ хранилища не делает
       // удаление ошибкой: строки уже нет, а осиротевший секрет безвреден —
       // hosts.id AUTOINCREMENT, id не переиспользуется.
-      try {
-        await keychain.deleteSecret(id);
-      } catch (err) {
-        if (!(err instanceof SecretStoreUnavailableError)) throw err;
+      if (credential) {
+        try {
+          await keychain.deleteSecret(credential);
+        } catch (err) {
+          if (!(err instanceof SecretStoreUnavailableError)) throw err;
+        }
       }
       // HM-12: незачем хранить в config.json ожидающий ключ удалённого хоста
       if (host?.keyPath) clearPendingDeployment(host.keyPath);
@@ -171,9 +179,12 @@ export function registerHostIpcHandlers(): void {
     assertSenderIsMainWindow(event);
     const id = validateId(rawId, 'hostId');
     // Только факт наличия — само значение никогда не покидает main (SEC-01).
+    // Хоста нет — адресовать нечем и секрета быть не может: false, не ошибка.
     // Хранилище недоступно → «секрета нет»: форма не должна падать от этого.
+    const credential = repo.getHostCredential(id);
+    if (!credential) return false;
     try {
-      return await keychain.hasSecret(id);
+      return await keychain.hasSecret(credential);
     } catch (err) {
       if (err instanceof SecretStoreUnavailableError) return false;
       throw err;
@@ -183,7 +194,10 @@ export function registerHostIpcHandlers(): void {
   ipcMain.handle(IPC.hostDeleteSecret, async (event, rawId: unknown): Promise<void> => {
     assertSenderIsMainWindow(event);
     const id = validateId(rawId, 'hostId');
-    await keychain.deleteSecret(id);
+    // Хоста нет — и записи, адресованной его идентичностью, тоже: тихий no-op.
+    const credential = repo.getHostCredential(id);
+    if (!credential) return;
+    await keychain.deleteSecret(credential);
   });
 
   ipcMain.handle(IPC.hostPickKeyFile, async (event): Promise<string | null> => {

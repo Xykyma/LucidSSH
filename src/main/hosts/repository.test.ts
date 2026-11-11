@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -370,5 +370,118 @@ describe('каскад удаления хоста (hosts.db, foreign_keys=ON) �
     repo.deleteHost(id);
 
     expect(listDismissedAlerts(id)).toEqual([]);
+  });
+});
+
+describe('миграция v4 — credential_id (Идентичность секрета хоста, NFR-05 тикет 04)', () => {
+  const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  /** Готовит "старую" БД по схеме v1+v2+v3 напрямую, до подключения db.ts. */
+  function seedV3Db(): { firstId: number; secondId: number } {
+    const path = join(dir, 'hosts.db');
+    const raw = new Database(path);
+    raw.exec(`
+      CREATE TABLE groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0, collapsed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE hosts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, address TEXT NOT NULL,
+        port INTEGER NOT NULL DEFAULT 22, username TEXT NOT NULL, auth_method TEXT NOT NULL,
+        key_path TEXT, group_id INTEGER, proxy_jump TEXT,
+        proxy_jump_host_id INTEGER REFERENCES hosts(id) ON DELETE SET NULL, note TEXT,
+        guard_enabled INTEGER NOT NULL DEFAULT 1, history_enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE host_dismissed_alerts (
+        host_id INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+        issue TEXT NOT NULL, PRIMARY KEY (host_id, issue)
+      );
+    `);
+    const now = new Date().toISOString();
+    const insert = raw.prepare(
+      `INSERT INTO hosts (name, address, port, username, auth_method, guard_enabled, created_at, updated_at)
+       VALUES (?, ?, 22, 'root', 'password', 1, ?, ?)`
+    );
+    const firstId = Number(insert.run('web-01', '203.0.113.10', now, now).lastInsertRowid);
+    const secondId = Number(insert.run('web-02', '203.0.113.11', now, now).lastInsertRowid);
+    raw.pragma('user_version = 3');
+    raw.close();
+    return { firstId, secondId };
+  }
+
+  it('присваивает каждому существующему хосту уникальный UUID; БД скопирована перед миграцией', async () => {
+    const { firstId, secondId } = seedV3Db();
+    const repo = await freshRepo();
+
+    const first = repo.getHostCredential(firstId);
+    const second = repo.getHostCredential(secondId);
+    expect(first?.credentialId).toMatch(UUID_V4_RE);
+    expect(second?.credentialId).toMatch(UUID_V4_RE);
+    expect(first?.credentialId).not.toBe(second?.credentialId);
+    // Резервная копия перед необратимой миграцией (UPD-04)
+    expect(existsSync(join(dir, 'hosts.db.backup-v3'))).toBe(true);
+  });
+
+  it('повторный запуск и обычное редактирование credentialId не меняют', async () => {
+    const { firstId } = seedV3Db();
+    const repo = await freshRepo();
+    const before = repo.getHostCredential(firstId)!;
+
+    const { closeHostsDb } = await import('./db');
+    closeHostsDb();
+    const repo2 = await freshRepo();
+    expect(repo2.getHostCredential(firstId)).toEqual(before);
+
+    repo2.updateHost(firstId, { ...base, name: 'web-01-renamed' });
+    expect(repo2.getHostCredential(firstId)).toEqual(before);
+  });
+
+  it('createHost: новый хост получает новый credentialId; deleteHost убирает идентичность', async () => {
+    const repo = await freshRepo();
+    const id = repo.createHost({ ...base, name: 'new-host' });
+    const credential = repo.getHostCredential(id)!;
+    expect(credential.hostId).toBe(id);
+    expect(credential.credentialId).toMatch(UUID_V4_RE);
+
+    repo.deleteHost(id);
+    expect(repo.getHostCredential(id)).toBeNull();
+  });
+
+  it('renderer-проекция и экспорт не содержат credentialId', async () => {
+    const repo = await freshRepo();
+    const id = repo.createHost({ ...base, name: 'web-01' });
+    const credentialId = repo.getHostCredential(id)!.credentialId;
+
+    expect(repo.getHost(id)).not.toHaveProperty('credentialId');
+    expect(JSON.stringify(repo.listHosts())).not.toContain(credentialId);
+
+    const { buildExport } = await import('./exportImport');
+    const exported = JSON.stringify(buildExport(repo.listHosts(), repo.listGroups()));
+    expect(exported).not.toContain(credentialId);
+    expect(exported).not.toContain('credentialId');
+  });
+
+  it('импорт создаёт новую идентичность: импортированный хост не наследует секрет источника', async () => {
+    const repo = await freshRepo();
+    const sourceId = repo.createHost({ ...base, name: 'web-01' });
+    const sourceCredential = repo.getHostCredential(sourceId)!.credentialId;
+
+    const { buildExport } = await import('./exportImport');
+    const json = JSON.stringify(buildExport(repo.listHosts(), repo.listGroups()));
+
+    const { closeHostsDb } = await import('./db');
+    closeHostsDb();
+    rmSync(join(dir, 'hosts.db'));
+    // exportImport берём из того же свежего графа, что и repo2: его repo.*
+    // захвачен на загрузке модуля, граф «до resetModules» уже закрыт.
+    const repo2 = await freshRepo();
+    const { importHosts } = await import('./exportImport');
+    expect(importHosts(json, 'skip')).toEqual({ imported: 1, skipped: 0 });
+
+    const importedCredential = repo2.getHostCredential(repo2.listHosts()[0]!.id)!.credentialId;
+    expect(importedCredential).toMatch(UUID_V4_RE);
+    expect(importedCredential).not.toBe(sourceCredential);
   });
 });

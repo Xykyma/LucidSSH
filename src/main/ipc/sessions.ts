@@ -24,7 +24,7 @@ import type { SubmitResult } from '@shared/guard';
 import { validateHostInput, validateId, validateSecret } from '../hosts/validate';
 import { testConnection } from '../ssh/testConnection';
 import { getSecretForConnection } from '../keychain';
-import { getHost } from '../hosts/repository';
+import { getHost, getHostCredential } from '../hosts/repository';
 import { assertSenderIsMainWindow, assertString, IpcValidationError } from './validate';
 
 /**
@@ -156,10 +156,13 @@ export function registerSessionIpcHandlers(): void {
         stored.keyPath === input.keyPath &&
         stored.proxyJumpHostId === input.proxyJumpHostId
       ) {
-        try {
-          secret = (await getSecretForConnection(stored.id)) ?? undefined;
-        } catch {
-          secret = undefined;
+        const credential = getHostCredential(hostId!);
+        if (credential) {
+          try {
+            secret = (await getSecretForConnection(credential)) ?? undefined;
+          } catch {
+            secret = undefined;
+          }
         }
       }
       return testConnection(input, secret, hostId);
