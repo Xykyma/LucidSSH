@@ -227,7 +227,7 @@ They must never be saved:
 - in renderer state;
 - in IPC messages.
 
-SQLite only stores a reference like `LucidSSH/{hostId}`. When a host is deleted, the associated Credential Manager entry must also be removed after user confirmation.
+SQLite stores no secrets — only the record's identity. The installed build and other platforms address the record by the former `LucidSSH/{hostId}` (no migration of existing secret-store records needed). A portable profile addresses it as `LucidSSH/{profileId}/{credentialId}`, where `credentialId` is a permanent UUID in `hosts.db`: hosts copied along with the profile keep a shared secret on the same PC, while identical numeric ids in different profiles and independent copies get no access to each other's records. `credentialId` is main-only — never part of the renderer model, export/import, `AppInfo`, or logs. When a host is deleted, the associated Credential Manager entry must also be removed after user confirmation.
 
 The password field in the UI must never auto-fill with the actual saved value. The interface only shows a "password saved" state.
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { AuthMethod, Host, HostGroup, HostInput } from '@shared/hosts';
 import { openHostsDb } from './db';
 
@@ -22,6 +23,7 @@ interface HostRow {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  credential_id: string;
 }
 
 interface GroupRow {
@@ -33,6 +35,8 @@ interface GroupRow {
 }
 
 function rowToHost(r: HostRow): Host {
+  // credential_id намеренно не маппится: renderer-модель Host, экспорт/импорт
+  // и журналы идентичность секрета не видят (NFR-05, тикет 04).
   return {
     id: r.id,
     name: r.name,
@@ -83,9 +87,9 @@ export function createHost(input: HostInput): number {
   const res = openHostsDb()
     .prepare(
       `INSERT INTO hosts (name, address, port, username, auth_method, key_path,
-         group_id, proxy_jump_host_id, note, guard_enabled, history_enabled, sort_order, created_at, updated_at)
+         group_id, proxy_jump_host_id, note, guard_enabled, history_enabled, sort_order, created_at, updated_at, credential_id)
        VALUES (@name, @address, @port, @username, @authMethod, @keyPath,
-         @groupId, @proxyJumpHostId, @note, @guardEnabled, @historyEnabled, @sortOrder, @createdAt, @updatedAt)`
+         @groupId, @proxyJumpHostId, @note, @guardEnabled, @historyEnabled, @sortOrder, @createdAt, @updatedAt, @credentialId)`
     )
     .run({
       name: input.name,
@@ -101,7 +105,8 @@ export function createHost(input: HostInput): number {
       historyEnabled: input.historyEnabled ? 1 : 0,
       sortOrder: 0,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      credentialId: randomUUID()
     });
   return Number(res.lastInsertRowid);
 }
@@ -134,6 +139,26 @@ export function updateHost(id: number, input: HostInput): void {
 
 export function deleteHost(id: number): void {
   openHostsDb().prepare('DELETE FROM hosts WHERE id = ?').run(id);
+}
+
+/**
+ * Идентичность записи Хранилища секретов (main-only, NFR-05 тикет 04). Не
+ * путать с renderer-моделью Host: credentialId не покидает main — экспорт/
+ * импорт, `AppInfo` и журналы его не видят. В portable адрес записи
+ * строится из profileId + credentialId, поэтому одного числового id здесь
+ * недостаточно. Обычное редактирование хоста значение не меняет.
+ */
+export interface HostCredential {
+  hostId: number;
+  credentialId: string;
+}
+
+/** Идентичность секрета хоста; null — записи с таким id нет. */
+export function getHostCredential(id: number): HostCredential | null {
+  const row = openHostsDb()
+    .prepare('SELECT id, credential_id FROM hosts WHERE id = ?')
+    .get(id) as { id: number; credential_id: string } | undefined;
+  return row ? { hostId: row.id, credentialId: row.credential_id } : null;
 }
 
 /** Порядок хостов внутри группы (drag-and-drop в сайдбаре). */

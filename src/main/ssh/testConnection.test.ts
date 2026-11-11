@@ -5,7 +5,7 @@ import type { Host, HostInput } from '@shared/hosts';
 // Ровно тот же принцип изоляции, что и в sessionManager.test.ts: seam ограничен
 // __setConnectionFactoryForTest, hosts/repository и keychain подменяются напрямую —
 // better-sqlite3/keytar/Electron тестам этого файла не нужны.
-vi.mock('../hosts/repository', () => ({ getHost: vi.fn() }));
+vi.mock('../hosts/repository', () => ({ getHost: vi.fn(), getHostCredential: vi.fn() }));
 vi.mock('../keychain', () => ({ getSecretForConnection: vi.fn() }));
 vi.mock('../config/store', () => ({ loadConfig: vi.fn() }));
 // Машинка решения (ADR-0016) — своя, уже покрыта hostKeyDecision.test.ts;
@@ -29,7 +29,7 @@ vi.mock('./keys', () => ({
 
 import { loadConfig } from '../config/store';
 import { getSecretForConnection } from '../keychain';
-import { getHost } from '../hosts/repository';
+import { getHost, getHostCredential } from '../hosts/repository';
 import { requestHostKeyDecision, type RequestHostKeyDecisionParams } from './hostKeyDecision';
 import { loadPrivateKey } from './keys';
 import { testConnection } from './testConnection';
@@ -39,8 +39,16 @@ import { makeFakeConnection } from './fakeConnection';
 const mockLoadConfig = vi.mocked(loadConfig);
 const mockGetSecretForConnection = vi.mocked(getSecretForConnection);
 const mockGetHost = vi.mocked(getHost);
+const mockGetHostCredential = vi.mocked(getHostCredential);
 const mockRequestHostKeyDecision = vi.mocked(requestHostKeyDecision);
 const mockLoadPrivateKey = vi.mocked(loadPrivateKey);
+
+// Секрет bastion читается по полной идентичности записи (NFR-05, тикет 04):
+// для любого существующего bastion-хоста идентичность определена.
+mockGetHostCredential.mockImplementation((id: number) => ({
+  hostId: id,
+  credentialId: `cred-${id}`
+}));
 
 /** По умолчанию решение принимается немедленно как «ключ совпал» — большинству
  *  тестов сама сверка отпечатка не интересна. Тесты, которым важен именно

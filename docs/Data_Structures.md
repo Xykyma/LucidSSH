@@ -15,7 +15,7 @@
 
 | Data | Storage | File | Secrets |
 |---|---|---|---|
-| Hosts and groups | SQLite | `%APPDATA%\LucidSSH\hosts.db` | No — only a reference `LucidSSH/{hostId}` |
+| Hosts and groups | SQLite | `%APPDATA%\LucidSSH\hosts.db` | No — installed build references `LucidSSH/{hostId}`; a portable profile references `LucidSSH/{profileId}/{credentialId}` |
 | Command history | SQLite | `%APPDATA%\LucidSSH\history.db` | No — secrets are masked (HIST-07) |
 | Passwords and passphrases | Windows Credential Manager | system | Yes — via keytar |
 | Known hosts | File | `%APPDATA%\LucidSSH\known_hosts` | No |
@@ -59,9 +59,13 @@ CREATE TABLE hosts (
   history_enabled INTEGER NOT NULL DEFAULT 1, -- per-host command history (HIST-07)
   sort_order    INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT    NOT NULL,
-  updated_at    TEXT    NOT NULL
+  updated_at    TEXT    NOT NULL,
+  credential_id TEXT    NOT NULL            -- host credential identity (NFR-05): permanent UUID v4 assigned
+                                            -- by migration v4 / on creation; UNIQUE index. Main-only:
+                                            -- never part of the renderer Host model, export/import, AppInfo, or logs
   -- IMPORTANT: no password, passphrase, or key contents live here.
-  -- The secret is in Credential Manager under the key LucidSSH/{id}.
+  -- The installed build addresses the secret as LucidSSH/{id}; a portable
+  -- profile addresses it as LucidSSH/{profileId}/{credential_id} (windows-portable ticket 04).
 );
 ```
 
