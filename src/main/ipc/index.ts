@@ -2,7 +2,7 @@ import { app, clipboard, ipcMain, shell } from 'electron';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IPC, type AppInfo } from '@shared/ipc';
-import { loadConfig, updateConfig } from '../config/store';
+import { isPortableBuild, loadConfig, saveConfig, updateConfig } from '../config/store';
 import {
   changeMainLanguage,
   isValidLanguage,
@@ -23,7 +23,32 @@ export function registerIpcHandlers(): void {
   // --- Приложение ---
   ipcMain.handle(IPC.appGetInfo, (event): AppInfo => {
     assertSenderIsMainWindow(event);
-    return { version: app.getVersion(), language: loadConfig().language };
+    const cfg = loadConfig();
+    const portable = isPortableBuild();
+    return {
+      version: app.getVersion(),
+      language: cfg.language,
+      portable,
+      portableWarningRequired: portable && !cfg.portableWarningAcknowledged
+    };
+  });
+
+  // NFR-05 (тикет 06): подтверждение стартового предупреждения текущего
+  // portable-профиля. Меняет состояние только в portable; повторный вызов
+  // безопасен. Ошибка записи откатывает отметку в памяти — предупреждение не
+  // считается принятым, и окно (ждущее успешного invoke) остаётся открытым.
+  ipcMain.handle(IPC.portableWarningConfirm, (event): void => {
+    assertSenderIsMainWindow(event);
+    if (!isPortableBuild()) return;
+    const cfg = loadConfig();
+    if (cfg.portableWarningAcknowledged) return;
+    cfg.portableWarningAcknowledged = true;
+    try {
+      saveConfig();
+    } catch (err) {
+      cfg.portableWarningAcknowledged = false;
+      throw err;
+    }
   });
 
   // Захардкоженные URL, не принимают аргументов от renderer (§22 гайда —

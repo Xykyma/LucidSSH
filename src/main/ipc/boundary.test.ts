@@ -87,7 +87,8 @@ vi.mock('../config/store', () => {
     return configFixture.cfg;
   });
   const resetConfig = vi.fn(() => configFixture.cfg);
-  return { loadConfig, updateConfig, saveConfig, resetConfig };
+  const isPortableBuild = vi.fn(() => false); // дефолт — установленная версия
+  return { loadConfig, updateConfig, saveConfig, resetConfig, isPortableBuild };
 });
 
 vi.mock('../content/loader', () => ({
@@ -441,7 +442,8 @@ function createConfigFixture(): AppConfig {
     hotkeys: { ...DEFAULT_HOTKEYS },
     history: { enabled: true, saveOutput: false },
     shownCounts: {},
-    updates: { autoCheck: true, source: '' }
+    updates: { autoCheck: true, source: '' },
+    portableWarningAcknowledged: false
   };
 }
 
@@ -501,6 +503,8 @@ beforeEach(() => {
   // Дефолт — установленная версия; portable-кейсы тикета 05 переопределяют
   // (mockReturnValue сбрасывался бы между тестами не полностью — держим тут).
   vi.mocked(profileIdentityModule.getProfileId).mockReturnValue(null);
+  // Дефолт — не portable; portable-кейсы тикета 06 переопределяют.
+  vi.mocked(configStoreModule.isPortableBuild).mockReturnValue(false);
 });
 
 describe('регистрация каналов', () => {
@@ -568,6 +572,84 @@ describe('пункт 1 — сторож отправителя (параметр
   // — кейс `hosts:delete` из it.each выше падал с сообщением об ошибке
   // валидатора id на undefined вместо «IPC from unknown sender rejected» (и
   // repo.getHost/deleteHost получали вызов до отказа). Правка возвращена.
+});
+
+// NFR-05 (тикет 06): AppInfo сообщает portable-признаки, не раскрывая путь,
+// profileId или credentialId; portable-warning:confirm подтверждает только
+// предупреждение текущего portable-профиля.
+describe('пункт 6 — portable-предупреждение (AppInfo + portable-warning:confirm)', () => {
+  const mockIsPortableBuild = vi.mocked(configStoreModule.isPortableBuild);
+  const mockSaveConfig = vi.mocked(configStoreModule.saveConfig);
+
+  it('app:get-info — установленная версия: portable и portableWarningRequired false', async () => {
+    const result = await invoke(IPC.appGetInfo, mainEvent());
+
+    expect(result).toEqual({
+      ok: true,
+      value: { version: '0.0.0-test', language: 'ru', portable: false, portableWarningRequired: false }
+    });
+  });
+
+  it('app:get-info — portable без отметки: required true; с отметкой — false; путь/ID не раскрываются', async () => {
+    mockIsPortableBuild.mockReturnValue(true);
+
+    const required = await invoke(IPC.appGetInfo, mainEvent());
+    expect(required).toEqual({
+      ok: true,
+      value: { version: '0.0.0-test', language: 'ru', portable: true, portableWarningRequired: true }
+    });
+
+    configFixture.cfg.portableWarningAcknowledged = true;
+    const acked = await invoke(IPC.appGetInfo, mainEvent());
+    expect(acked).toEqual({
+      ok: true,
+      value: { version: '0.0.0-test', language: 'ru', portable: true, portableWarningRequired: false }
+    });
+  });
+
+  it('portable-warning:confirm — установленная версия: no-op, запись не вызывается', async () => {
+    const result = await invoke(IPC.portableWarningConfirm, mainEvent());
+
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(mockSaveConfig).not.toHaveBeenCalled();
+    expect(configFixture.cfg.portableWarningAcknowledged).toBe(false);
+  });
+
+  it('portable-warning:confirm — portable: отметка выставлена и сохранена', async () => {
+    mockIsPortableBuild.mockReturnValue(true);
+
+    const result = await invoke(IPC.portableWarningConfirm, mainEvent());
+
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(configFixture.cfg.portableWarningAcknowledged).toBe(true);
+    expect(mockSaveConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('portable-warning:confirm — повторный вызов безопасен: записи нет', async () => {
+    mockIsPortableBuild.mockReturnValue(true);
+    configFixture.cfg.portableWarningAcknowledged = true;
+
+    const result = await invoke(IPC.portableWarningConfirm, mainEvent());
+
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(mockSaveConfig).not.toHaveBeenCalled();
+  });
+
+  it('portable-warning:confirm — ошибка записи: отметка не принята, повторный успешный вызов работает', async () => {
+    mockIsPortableBuild.mockReturnValue(true);
+    mockSaveConfig.mockImplementationOnce(() => {
+      throw new Error('EACCES');
+    });
+
+    const failed = await invoke(IPC.portableWarningConfirm, mainEvent());
+    expect(failed.ok).toBe(false);
+    expect(configFixture.cfg.portableWarningAcknowledged).toBe(false); // не принято
+
+    const retried = await invoke(IPC.portableWarningConfirm, mainEvent());
+    expect(retried).toEqual({ ok: true, value: undefined });
+    expect(configFixture.cfg.portableWarningAcknowledged).toBe(true);
+    expect(mockSaveConfig).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('пункт 2 — каналы Стража доходят до guard/manager, не до провода', () => {

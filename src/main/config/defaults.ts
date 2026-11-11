@@ -58,6 +58,7 @@ export function createDefaultConfig(appVersion: string): AppConfig {
     updates: {
       autoCheck: true,
       source: ''
-    }
+    },
+    portableWarningAcknowledged: false
   };
 }

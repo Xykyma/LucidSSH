@@ -55,6 +55,8 @@ const api = {
   openReleasesPage: (): void => ipcRenderer.send(IPC.appOpenReleasesPage),
   openBugReport: (): void => ipcRenderer.send(IPC.appOpenBugReport),
   openFeatureRequest: (): void => ipcRenderer.send(IPC.appOpenFeatureRequest),
+  // NFR-05 (тикет 06): окно закрывает предупреждение только после успешного resolve
+  confirmPortableWarning: (): Promise<void> => ipcRenderer.invoke(IPC.portableWarningConfirm),
 
   // --- Буфер обмена ---
   clipboardRead: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),

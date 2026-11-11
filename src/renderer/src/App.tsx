@@ -10,6 +10,7 @@ import { TerminalArea } from './components/Terminal/TerminalArea';
 import { FingerprintModal } from './components/Terminal/FingerprintModal';
 import { CatalogPanel } from './components/CommandCatalog/CatalogPanel';
 import { WelcomeScreen } from './components/Onboarding/WelcomeScreen';
+import { PortableWarningModal } from './components/Onboarding/PortableWarningModal';
 import { FeatureGuide } from './components/Onboarding/FeatureGuide';
 import { HelpScreen } from './components/Onboarding/HelpScreen';
 import { WindowCloseGuard } from './components/Terminal/WindowCloseGuard';
@@ -63,6 +64,18 @@ function AppBody(): JSX.Element {
   } = usePanels();
   const { addFingerprintEvent } = useEvents();
   const [previewWelcome, setPreviewWelcome] = useState(false);
+  // NFR-05 (тикет 06): одно блокирующее предупреждение portable-профиля до
+  // обычного UI. null — AppInfo ещё не пришёл: обычный UI не рендерим, чтобы
+  // не показывать его до решения о предупреждении. Отказ getAppInfo трактуем
+  // как «не показывать» — отметка всё равно ставится только через IPC main.
+  const [portableWarningRequired, setPortableWarningRequired] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void window.lucidSSH
+      .getAppInfo()
+      .then((info) => setPortableWarningRequired(info.portableWarningRequired))
+      .catch(() => setPortableWarningRequired(false));
+  }, []);
 
   // NOTIF-03: изменение отпечатка сервера попадает в ленту событий шапки.
   useEffect(() => {
@@ -108,6 +121,9 @@ function AppBody(): JSX.Element {
   const leftRef = useRef<HTMLElement>(null);
   const rightRef = useRef<HTMLElement>(null);
 
+  // Блокирующее portable-предупреждение решается раньше обычного UI (тикет 06).
+  if (portableWarningRequired === null) return <div className="flex h-full flex-col" />;
+
   const showWelcome = (loaded && hosts.length === 0) || previewWelcome;
   const leftWidth = config?.ui.leftPanelWidth ?? 220;
   const rightWidth = config?.ui.rightPanelWidth ?? 320;
@@ -115,6 +131,9 @@ function AppBody(): JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
+      {portableWarningRequired && (
+        <PortableWarningModal onClose={() => setPortableWarningRequired(false)} />
+      )}
       <TitleBar />
       {showWelcome ? (
         <div className="relative flex min-h-0 flex-1 flex-col">
