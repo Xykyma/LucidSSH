@@ -1,6 +1,6 @@
-# AGENTS.md — shared operating rules for Kimi Code and Codex
+# AGENTS.md — operating rules
 
-This file contains the mandatory rules for working on **LucidSSH for Windows**. Read before every task. Both agents follow this file; `CLAUDE.md` and `.kimi-code/AGENTS.md` are entry points, not separate rule sets. On conflict: the spec (`private/TZ.md`) and the implemented UI in `src/renderer/components/` take priority over this file; this file takes priority over general habits.
+This file contains the mandatory rules for working on **LucidSSH for Windows**. Read before every task. On conflict: the spec (`private/TZ.md`) and the implemented UI in `src/renderer/components/` take priority over this file; this file takes priority over general habits.
 
 > **Public/private repository.** Part of the documentation lives in `private/` — not published, contains unimplemented requirements, roadmap, and internal decision context. `docs/` is the public showcase (README, implemented ✅ requirements, security architecture, data schemas) — published in **English**, since the repository audience isn't limited to Russian speakers; `private/` stays in **Russian**, it's the working source for the developer and the AI agents, not meant for outside readers. For internal work (including resolving open questions, planning features beyond 1.0) always use the full versions in `private/`, not the public ones in `docs/`. Split details — `docs/agent/domain.md` or ask the developer.
 
@@ -166,6 +166,8 @@ Of the three ADRs recorded from that session, only `docs/agent/adr/0002-no-local
 
 **CHANGELOG.md** — Keep a Changelog format, **in English** (decision from 2026-07-25: the repository is public, the audience isn't limited to Russian speakers — as a technical document for contributors, the CHANGELOG is kept in a single language to avoid drift risk; only the user-facing GitHub Release description is bilingual). Sections: Added, Changed, Fixed, Removed, Security. The GitHub Release description mirrors the corresponding CHANGELOG block (can be bilingual, ru+en, like the release itself).
 
+**Pull requests** — title and body **in English** (same public-audience rationale; решение от 2026-11-11). Внутренние материалы (issue-файлы `.scratch/`, `private/`, отчёты агентам) остаются на русском.
+
 **Release blocker:** BLK-01 — code signing certificate (closed: decision — ship without a signature, SHA-256 instead, see `docs/TZ.md` NFR-06 — public). Full rationale — `private/TZ.md` §11.1 and `private/Release_and_Update_Strategy.md` §9 (not published).
 
 ---
@@ -237,65 +239,8 @@ Rules:
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
 
-## 12. AI collaboration
+## 12. Working rules
 
-### Roles and sequential work
-
-- **Kimi Code is the primary development agent.** Use its available quota efficiently: scoped reads, existing helpers, targeted checks, and no unnecessary delegation. **Codex is the fallback when Kimi reaches its limits and an independent code reviewer.** An explicit user assignment takes precedence; continue an already authorized task on the current agent.
-- At task start: read this file and `docs/ai/HANDOFF.md` if present, inspect the branch, HEAD, status, staged/unstaged diffs and relevant files, then read the task's spec. HANDOFF is context; source files and fresh checks determine the actual state.
-- Only one of Kimi Code and Codex edits the shared checkout at a time. Before switching, stop or finish pending edits, commands and background writers. A reviewer reads a stable diff. Subagents, when justified and permitted by the host, receive disjoint work or read-only tasks.
+- Работай экономно: scoped reads, существующие хелперы, точечные проверки, без лишней делегации. Явное назначение пользователя имеет приоритет; уже авторизованную задачу продолжай до конца.
+- At task start: read this file, inspect the branch, HEAD, status, staged/unstaged diffs and relevant files, then read the task's spec. Source files and fresh checks determine the actual state.
 - Preserve unrelated work, including untracked files. Commit and push permissions remain separate and specific under §8. Never reset, discard, stage unrelated changes, install tools/plugins, add dependencies or change global agent/Git settings without authorization.
-- For **Code Review**, Codex reports findings first (severity, location, consequence and missing validation); it does not fix code without a separate request. Check behavior against the spec and existing architecture, rather than relying on the implementing agent's summary.
-
-### Local HANDOFF
-
-Update `docs/ai/HANDOFF.md` after meaningful milestones and before handing work to the other agent, not after every small action. Replace stale state; keep it short, actionable and free of secrets, tokens, passwords and transcript dumps. It must contain:
-
-- **Current status**: current task, stage, active branch, base commit.
-- **Completed**: changes, affected files and decisions.
-- **In progress**: remaining work, known issues and relevant uncommitted changes; distinguish unrelated pre-existing work.
-- **Validation**: exact checks run, results and what remains unchecked; record the native-module ABI if changed.
-- **Next steps**: concrete next actions and any required user decision.
-- **AI execution**: last agent, confirmed model (or unknown), relevant subagents/models and tool limitations.
-
-On a quota interruption, the incoming agent reconstructs progress from Git/files and the latest HANDOFF; access to the other agent's session is optional. If a limit prevents the outgoing agent from updating HANDOFF, the incoming agent reconciles it with the checkout before editing.
-
-`AGENTS.md` belongs in version control. HANDOFF is **local only**, including though it lives under `docs/`. In each checkout, resolve the local exclude using `git rev-parse --git-path info/exclude`, append `/docs/ai/HANDOFF.md` if absent, and verify with `git check-ignore -v docs/ai/HANDOFF.md`. Keep `.gitignore` and global Git settings unchanged. First check `git ls-files -- docs/ai/HANDOFF.md`: if already tracked, report it and request permission before removing it from the index. Exclude rules do not untrack files. Recreate the local file/exclusion in a new clone; they do not travel with Git.
-
-## 13. Model selection and transparency
-
-### Once at session start
-
-At the beginning of a new chat/session, assess the planned work and recommend an available model and reasoning effort once, balancing quality, speed and quota. Prefer Kimi for implementation, preserving Codex availability for review/fallback. Historical model suggestions in tickets are context, not a fixed catalog or proof of availability.
-
-Use one short line in the user's language, with only the model, effort and a brief reason (Russian format):
-
-```text
-Модель: <model> · Усилие: <effort> — <brief reason>.
-```
-
-Label a recommendation as a recommendation if it differs from the confirmed current model; use «не определена» / «не определено» for unknown model/effort details. Never claim a model switch without confirmation. If the user wants to apply a recommendation and the agent cannot switch, briefly explain the client-supported control.
-
-Keep the main model and effort for the rest of the session. Follow-up messages, new tasks in the same chat, tool calls, context compaction and resuming that chat do not trigger another model assessment or announcement. Revisit the choice only when the user explicitly asks. If the user or host actually changes the model/effort, disclose the confirmed change once in the same short format. Continue authorized work on the current model; do not pause or propose a new chat solely for model selection.
-
-### Evidence and subagents
-
-- A configured default, requested model, provider alias and actual runtime model are different facts. Report what is confirmed by the runtime, session status or launch result, preserving aliases as aliases; report unknown details as unknown. Do not infer a backend model from a brand, skill name or local config default.
-- Use subagents only when their benefit justifies quota consumption and the current host permits them. Choose an economical available model for routine exploration and a stronger available model for complex or critical work, only where the host supports selection. Otherwise disclose inheritance or unknown identity.
-- Before launch or in the nearest report, give each subagent's name, task, selected model and reasoning effort if available. Record explicit launch parameters as requested values; distinguish them from confirmed execution. When model/effort are inherited, say so. A full-history Codex fork may require inheritance; use only the parameters exposed by the current tool.
-- Give each subagent the root instruction path, the relevant spec and HANDOFF context, its exact scope and validation obligations. Require it to read `AGENTS.md`; do not assume the parent's conversation or instruction files are automatically inherited by every client. The primary agent verifies the returned work.
-
-### Skills, plugins, MCP and other tools
-
-Identify significant tools by name and purpose when useful. Disclose a separate model executor when one is involved; ordinary tool calls do not trigger another main-model announcement. Group repeated calls to the same tool; avoid per-call boilerplate.
-
-- An instructional skill runs on the invoking main agent or subagent; it does not by itself imply a separate model. Reuse the session's main-model disclosure rather than repeating it for each skill.
-- A compiler, ordinary function, local script or API without an LLM uses **no separate model**.
-- For a plugin/MCP using an external LLM, report a model only if the tool confirms it; otherwise say **model unknown**. If its internals are undisclosed, do not assert either presence or absence of an LLM. Missing model metadata does not block execution.
-- Skills, plugins and MCP connections available in one client are not automatically installed or available in the other. Inspect the current tool inventory and use authorized existing alternatives. Do not install or copy global configurations as an implicit handoff step.
-
-### Final task report
-
-State completed work, checks and results, outstanding work and material limitations. Mention significant tools or subagents/models when relevant. Do not repeat the main model/effort in every task report; the session-start disclosure is sufficient unless it changed or the user asks. Never invent exact models, token usage, cost or quota savings.
-
-This policy supplements the existing project rules and remains subject to the host's higher-priority instructions and actual capabilities.
