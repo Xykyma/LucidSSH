@@ -894,5 +894,11 @@
       "invalidId": "The profile.id file is empty or does not contain a valid profile identifier. To keep your saved passwords reachable, the app will not start from this folder and will not create a new ID automatically. Restore the original profile.id from a copy of the folder. For a new, independent profile choose a different, empty folder.",
       "createFailed": "Could not create profile.id next to the application — the folder is probably read-only. Check the folder permissions and start LucidSSH again."
     }
+  },
+  "profileWritability": {
+    "error": {
+      "title": "Portable profile is not writable",
+      "message": "The portable profile cannot safely save its data: {{file}} is not writable. To avoid losing settings, hosts, history, and trusted keys, the app will not start and will not run without saving. Check write permissions (or move the LucidSSH folder to another location) and launch the app again."
+    }
   }
 }
