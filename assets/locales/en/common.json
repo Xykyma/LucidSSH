@@ -761,6 +761,7 @@
       "idle": "Check for updates",
       "notConfigured": "Update source is not configured",
       "manualDeb": "This build (.deb) is updated manually",
+      "manualPortable": "The portable build updates manually: download the new exe from Releases and replace the old one — your profile is preserved.",
       "openReleases": "Open Releases",
       "autoCheck": "Auto-check for updates",
       "autoCheckDesc": "Check for new versions on launch (HTTPS to the update source)."

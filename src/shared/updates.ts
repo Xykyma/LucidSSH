@@ -34,7 +34,9 @@ export interface UpdateStatus {
   errorKey?: string;
   /** true, если источник обновлений не настроен (config.updates.source пуст). */
   notConfigured: boolean;
-  /** true для сборки без автообновления (Linux .deb): обновляется вручную через Releases. */
+  /** true для сборки без автообновления: обновляется вручную через Releases. */
   manualOnly: boolean;
+  /** Почему manual-only: portable exe не заменяет собственные файлы (NFR-05, тикет 07). */
+  manualReason?: 'deb' | 'portable';
   currentVersion: string;
 }

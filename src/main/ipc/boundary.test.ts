@@ -1553,6 +1553,24 @@ describe('keygen:open-install — deep-link только на Windows', () => {
   });
 });
 
+// Тикет 07 (NFR-05): manual-only обновления ведут на GitHub Releases, а не к
+// скачиванию пакета. Канал без аргументов: открывает только фиксированный
+// доверенный URL и только из главного окна.
+describe('app:open-releases-page — ручной переход на Releases', () => {
+  const mockOpenExternal = vi.mocked(electron.shell.openExternal);
+
+  it('главное окно — открывается страница Releases проекта', async () => {
+    await invoke(IPC.appOpenReleasesPage, mainEvent());
+    expect(mockOpenExternal).toHaveBeenCalledWith('https://github.com/Xykyma/LucidSSH/releases');
+  });
+
+  it('чужой отправитель — отказ, openExternal не вызывается', async () => {
+    const result = await invoke(IPC.appOpenReleasesPage, foreignEvent());
+    expect(result.ok).toBe(false);
+    expect(mockOpenExternal).not.toHaveBeenCalled();
+  });
+});
+
 describe('Хранилище секретов недоступно (тикет 08)', () => {
   const mockGetHost = vi.mocked(hostsRepositoryModule.getHost);
   const mockCreateHost = vi.mocked(hostsRepositoryModule.createHost);
