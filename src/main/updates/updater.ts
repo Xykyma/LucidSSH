@@ -13,7 +13,9 @@ import { isAutoUpdateSupported } from './autoUpdateSupport';
  * autoDownload/autoInstall выключены — скачивание и установка только по явному
  * согласию (UPD-02). Подпись и издателя проверяет electron-updater в main перед
  * установкой (UPD-03); без сертификата (BLK-01) проверка активируется, когда
- * приложение будет подписано.
+ * приложение будет подписано. Manual-only сборки (.deb, portable Windows,
+ * NFR-05 тикет 07) никогда не вызывают electron-updater: проверка, скачивание
+ * и установка — no-op, в интерфейсе — ручной переход на Releases.
  */
 
 const { autoUpdater } = electronUpdater;
@@ -25,7 +27,14 @@ let status: UpdateStatus = {
   currentVersion: '0.0.0'
 };
 
-const manualOnly = (): boolean => app.isPackaged && !isAutoUpdateSupported(process.platform, process.env);
+/** Почему сборка manual-only: portable exe не заменяет собственные файлы (07). */
+function manualReason(): UpdateStatus['manualReason'] {
+  if (!app.isPackaged) return undefined;
+  if (isAutoUpdateSupported(process.platform, process.env)) return undefined;
+  return process.platform === 'win32' ? 'portable' : 'deb';
+}
+
+const manualOnly = (): boolean => manualReason() !== undefined;
 
 function send(): void {
   emit(IPC.evUpdateStatus, status);
@@ -48,10 +57,12 @@ function isNotConfigured(): boolean {
 }
 
 export function initUpdater(): void {
+  const reason = manualReason();
   status = {
     state: 'idle',
     notConfigured: isNotConfigured(),
-    manualOnly: manualOnly(),
+    manualReason: reason,
+    manualOnly: reason !== undefined,
     currentVersion: app.getVersion()
   };
 
@@ -88,7 +99,7 @@ export function initUpdater(): void {
  * ручная — всегда. Источник не настроен или dev-сборка → тихий no-op (UPD-01).
  */
 export async function checkForUpdates(manual: boolean): Promise<void> {
-  if (manualOnly()) return; // .deb: обновляется вручную, autoUpdater не зовём
+  if (manualOnly()) return; // manual-only (.deb/portable): вручную, autoUpdater не зовём
   const cfg = loadConfig();
   const source = parseSource(cfg.updates.source);
   if (source === null && !app.isPackaged) {
@@ -108,6 +119,7 @@ export async function checkForUpdates(manual: boolean): Promise<void> {
 }
 
 export async function downloadUpdate(): Promise<void> {
+  if (manualOnly()) return; // manual-only: скачивание запрещено (тикет 07)
   try {
     await autoUpdater.downloadUpdate();
   } catch {
@@ -115,8 +127,9 @@ export async function downloadUpdate(): Promise<void> {
   }
 }
 
-/** UPD-04: бэкап БД перед установкой, затем перезапуск. */
+/** UPD-04: бэкап БД перед установкой, затем перезапуск. Manual-only: no-op. */
 export function installUpdate(): void {
+  if (manualOnly()) return; // ни бэкапа, ни перезапуска — операция запрещена (тикет 07)
   backupDatabases();
   autoUpdater.quitAndInstall(false, true);
 }

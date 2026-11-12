@@ -891,9 +891,11 @@ function AboutSection({
   const busy = updateState === 'checking' || updateState === 'downloading';
 
   const manualOnly = status?.manualOnly === true;
+  const manualTextKey =
+    status?.manualReason === 'portable' ? 'settings.updates.manualPortable' : 'settings.updates.manualDeb';
 
   const statusLine = ((): string | null => {
-    if (manualOnly) return t('settings.updates.manualDeb');
+    if (manualOnly) return t(manualTextKey);
     if (status?.notConfigured) return null; // не загромождаем компактную карточку в dev
     switch (updateState) {
       case 'checking':
