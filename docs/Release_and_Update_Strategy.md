@@ -25,7 +25,7 @@ This document defines:
 LucidSSH follows this scheme:
 
 1. Primary distribution format — an NSIS `.exe` installer.
-2. Secondary format — a portable ZIP requiring no installation.
+2. Secondary format — a portable exe requiring no installation (a single file with the profile data next to the exe; NFR-05).
 3. The build runs through `electron-builder`.
 4. The installed version auto-updates via `electron-updater`.
 5. Version files are hosted on GitHub Releases.
@@ -41,7 +41,7 @@ LucidSSH follows this scheme:
 File name:
 
 ```text
-LucidSSH-Setup-1.0.0.exe
+LucidSSH-Setup-1.0.0-x64.exe
 ```
 
 The installer must:
@@ -59,18 +59,19 @@ The installer must:
 File name:
 
 ```text
-LucidSSH-Portable-1.0.0.zip
+LucidSSH-Portable-1.0.0-x64.exe
 ```
 
 The portable version:
 
 - runs without installation;
 - requires no admin rights;
-- is updated manually by the user;
+- keeps the entire profile (settings, both databases, `known_hosts`, backups) next to the exe instead of `%APPDATA%` (NFR-05);
+- is updated manually by the user: download the new exe from GitHub Releases and replace the old one while the app is closed — the profile files stay in place, the regular migrations preserve `profile.id`, `credentialId`, hosts, and history, and the mandated schema backup is created (UPD-04);
 - is not the primary option for a beginner;
-- must never automatically replace its own executable files.
+- must never automatically replace its own executable files: the app never invokes auto-update in the portable build and shows a manual-only state with a link to GitHub Releases.
 
-Automatic updates in version 1.0 are only supported for the installed NSIS version.
+Auto-update is only supported for the installed NSIS version. `latest.yml` is produced only for the NSIS Setup and its blockmap — the portable exe never appears in the update metadata, and `latest.yml` is never edited by hand.
 
 ## 4. GitHub Release contents
 
@@ -80,9 +81,9 @@ Example release `v1.0.1`:
 
 ```text
 v1.0.1
-├── LucidSSH-Setup-1.0.1.exe
-├── LucidSSH-Setup-1.0.1.exe.blockmap
-├── LucidSSH-Portable-1.0.1.zip
+├── LucidSSH-Setup-1.0.1-x64.exe
+├── LucidSSH-Setup-1.0.1-x64.exe.blockmap
+├── LucidSSH-Portable-1.0.1-x64.exe
 └── latest.yml
 ```
 
@@ -90,12 +91,12 @@ File purposes:
 
 | File | Purpose |
 |---|---|
-| `LucidSSH-Setup-1.0.1.exe` | Installs the app and installs the update |
+| `LucidSSH-Setup-1.0.1-x64.exe` | Installs the app and installs the update |
 | `.exe.blockmap` | Differential update downloads, where supported for a given build |
-| `LucidSSH-Portable-1.0.1.zip` | Manual, install-free use |
+| `LucidSSH-Portable-1.0.1-x64.exe` | Manual, install-free use, profile next to the exe (NFR-05) |
 | `latest.yml` | Latest-version metadata for `electron-updater` |
 
-The installer, `.blockmap`, and `latest.yml` must all come from the same build. Manually editing `latest.yml` or mixing files from different builds is forbidden.
+The installer, `.exe.blockmap`, and `latest.yml` must all come from the same build. Manually editing `latest.yml` or mixing files from different builds is forbidden. `latest.yml` is produced by electron-builder for the NSIS Setup and its blockmap only — before publishing, its contents are checked separately (NSIS artifacts of one version only).
 
 ## 5. Version numbering
 
@@ -125,21 +126,22 @@ At this stage, releases are created manually.
 
 1. Bump the version number in `package.json`.
 2. Update the release notes — there are two, prepared in the same version-bump commit, before the build:
-   - the GitHub Release description (markdown, with the installer's SHA-256 and a note about the SmartScreen warning) — shown on the release page only;
+   - the GitHub Release description (markdown, with the SHA-256 of both Windows artifacts — the NSIS Setup and the portable exe — and a note about the SmartScreen warning) — shown on the release page only;
    - `build/release-notes.md` (plain text, `## RU`/`## EN` sections) — picked up by `electron-builder` into `latest.yml`'s `releaseNotes` field and shown in the app's Settings → About card by the installed previous version.
 3. Run tests and a production build.
-4. Build the NSIS installer and the portable ZIP via `electron-builder --publish never` (publishing is a separate manual step — see §6.2).
-5. Sign the executables with a code-signing certificate — **N/A, unsigned release (see §9)**.
-6. Verify the digital signature and timestamp — **N/A, unsigned release (see §9)**.
-7. Install the new version on a clean test system.
-8. Verify updating from the previous stable version.
-9. Verify that hosts, history, settings, and private-key references survive.
-10. Create a Git tag like `v1.0.1`.
-11. Create a GitHub Release with the same version number.
-12. Upload every file produced by that one build.
-13. Publish the release as a draft first and do a final review.
-14. Publish the stable release.
-15. Verify that the installed previous version detects the update.
+4. Build the NSIS installer and the portable exe via `electron-builder --publish never` (publishing is a separate manual step — see §6.2). Both artifacts come from one source state, one version, x64 only, with no new dependencies.
+5. Check the generated `latest.yml`: it points only to the NSIS Setup and the matching blockmap of the same version; the portable exe is absent from the metadata; no manual editing is used.
+6. Sign the executables with a code-signing certificate — **N/A, unsigned release (see §9)**.
+7. Verify the digital signature and timestamp — **N/A, unsigned release (see §9)**.
+8. Install the new version on a clean test system.
+9. Verify updating from the previous stable version.
+10. Verify that hosts, history, settings, and private-key references survive.
+11. Create a Git tag like `v1.0.1`.
+12. Create a GitHub Release with the same version number.
+13. Upload every file produced by that one build (NSIS Setup, blockmap, portable exe, `latest.yml`).
+14. Publish the release as a draft first and do a final review.
+15. Publish the stable release.
+16. Verify that the installed previous version detects the update.
 
 ### 6.2 Forbidden actions
 
@@ -224,7 +226,7 @@ As things stand, the decision is: LucidSSH 1.0 ships **without a trusted Code Si
 
 **What replaces signing in 1.0:**
 
-1. Every release ships with a **published SHA-256 checksum** in the GitHub Release description and on the download page.
+1. Every release ships with a **published SHA-256 checksum** for each Windows artifact (the NSIS Setup and the portable exe) in the GitHub Release description and on the download page.
 2. **On first download** (the GitHub Release description), the user gets an explanation of what the Windows "Unknown publisher" warning means and how to verify the file via the checksum — this is the only point where the explanation is useful, since SmartScreen fires BEFORE launch, not after. The app's first-launch window doesn't explain anything specifically — instead, Settings → About has a calm informational line about why there's no digital signature, with a link to the checksum, for anyone who checks after the fact.
 3. Before a stable publish, every release is submitted to **Microsoft Security Intelligence** for review (submit.microsoft.com, best-effort scanning, no guarantees).
 4. Once a signed version exists, this explanation will be updated.
@@ -388,7 +390,7 @@ Developer
     → submits the release to Microsoft Security Intelligence for scanning
     → verifies a clean install and an update
     → creates a Git tag and a draft release
-    → uploads the EXE, blockmap, ZIP, and latest.yml
+    → uploads the EXE, blockmap, portable exe, and latest.yml
     → adds the SHA-256 to the Release description
     → publishes the stable GitHub Release
 

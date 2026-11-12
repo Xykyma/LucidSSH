@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Document version | 1.1 |
-| Date | June 23, 2026 |
+| Document version | 1.2 |
+| Date | November 13, 2026 |
 | Related documents | `TZ.md` (section 4 — requirements SEC-01…08), `Data_Structures.md`, `Release_and_Update_Strategy.md` |
 
 > This document is the normative basis for requirements SEC-01…SEC-08, TERM-07, HIST-07, and UPD/SIGN in the spec. When convenience and security conflict, security wins.
@@ -56,6 +56,8 @@ LucidSSH cannot fully protect against:
 - physical access to an unlocked computer;
 - actions the user knowingly confirmed;
 - every possible destructive shell command.
+
+LucidSSH makes no "zero trace" promise: a portable profile keeps its data next to the exe and doesn't encrypt it (§18.1), and Chromium caches, the portable launcher's temporary extraction, and OS-level incidental traces are outside the app's control.
 
 The interface must never promise absolute protection. For example, the guard should be described as a way to warn about recognized dangerous commands, not as a guarantee that blocks every dangerous operation.
 
@@ -229,6 +231,8 @@ They must never be saved:
 
 SQLite stores no secrets — only the record's identity. The installed build and other platforms address the record by the former `LucidSSH/{hostId}` (no migration of existing secret-store records needed). A portable profile addresses it as `LucidSSH/{profileId}/{credentialId}`, where `credentialId` is a permanent UUID in `hosts.db`: hosts copied along with the profile keep a shared secret on the same PC, while identical numeric ids in different profiles and independent copies get no access to each other's records. `credentialId` is main-only — never part of the renderer model, export/import, `AppInfo`, or logs. When a host is deleted, the associated Credential Manager entry must also be removed after user confirmation.
 
+Changing the SSH destination (`address`/`port`/`username`/`auth_method`/`key_path`) mints a new `credentialId` in a portable profile — the former shared secret of profile copies is neither overwritten nor deleted; in the installed build the old secret is deleted or replaced by the new one. The old secret can never be sent to the changed destination. Changing only the password/passphrase without a destination change keeps the identity and updates the shared secret of all copies.
+
 The password field in the UI must never auto-fill with the actual saved value. The interface only shows a "password saved" state.
 
 ## 11. Private keys
@@ -397,6 +401,20 @@ Requirements:
 - backups and exports must never silently include secrets.
 
 Full SQLite encryption doesn't protect against malware running as the user, and it doesn't replace properly storing secrets.
+
+### 18.1 Portable profile
+
+The portable exe keeps the entire profile (`profile.id`, `config.json`, both databases, `known_hosts`, backups) next to the exe instead of `%APPDATA%`. The impact on the protection model:
+
+- profile files are **not encrypted** — access to the folder means access to hosts, history, and settings; there is no "zero trace" promise (see §2): Chromium caches, the portable launcher's temporary extraction, and OS-level incidental traces are outside the app's control;
+- secrets still live only in Windows Credential Manager (SEC-01) and are not part of the profile folder: DPAPI is bound to the user/machine, so secrets don't travel between machines — an architectural limitation the user is warned about once on first launch;
+- private keys are not copied by the portable profile either (SEC-02): original paths are used, and the key may not exist at that path on another machine;
+- profile identity is protected by the mandatory `profile.id` (not a secret — SEC-01 is unaffected): a missing or corrupted `profile.id`, or an inability to write any profile file, blocks the launch before any store is opened — partial operation without saving, or a silent switch to another profile, is forbidden;
+- secret-store isolation for portable hosts relies on the `LucidSSH/{profileId}/{credentialId}` address (§10): a copied profile keeps a shared secret on the same PC, and changing the SSH destination detaches the record from the former secret so the changed host never receives someone else's;
+- the portable app never replaces its own files via auto-update (manual-only): replacing the executable is only possible through user action outside the app, removing the "an update swapped the portable exe" attack class;
+- moving the profile folder to another drive is a user action; the app never copies or syncs the profile on its own.
+
+Rationale: `docs/agent/adr/0020-portable-profile-and-credential-identity.md`.
 
 ## 19. Shell integration, breadcrumb, and dashboard
 

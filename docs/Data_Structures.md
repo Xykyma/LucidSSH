@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Document version | 1.2 |
-| Date | August 26, 2026 |
+| Document version | 1.3 |
+| Date | November 13, 2026 |
 | Purpose | DB schemas, built-in database formats, IPC contracts, and settings format for Claude Code |
 | Base documents | `TZ.md`, `Security_Guide.md` |
 
@@ -24,6 +24,18 @@
 | Command catalog | Bundled with the package | `assets/commands.core.json` + `assets/locales/{lang}/commands.json` | No |
 
 Files are created with access restricted to the current Windows user (as far as the OS supports it). All SQL queries are parameterized; concatenating values into SQL is forbidden. History and hosts live in **separate** database files, so disabling/clearing history never touches hosts.
+
+### 1.1 Two data locations
+
+The installed Windows build and dev mode keep the profile in Electron's system directory (`userData` → `%APPDATA%\LucidSSH`). The portable exe (NFR-05) determines the mode from the running artifact — the `PORTABLE_EXECUTABLE_DIR` environment variable, which electron-builder injects only into the portable build — and keeps the entire profile next to the exe. The system directory is never redirected globally; a portable profile never reads, copies, or modifies the installed profile. Only the main process knows the mode: the renderer gets neither the profile path nor a mode flag.
+
+### 1.2 Portable profile contents
+
+A portable profile folder contains: `profile.id` (§1.3), `config.json`, `hosts.db` and `history.db` (with `<db>.backup-vN` sidecar copies), `known_hosts`, and the `backups/` directory. The exe itself and unrelated files don't make a folder a profile: a new profile is recognized only when `profile.id` and all known data artifacts are absent. Passwords and passphrases are not part of the folder (Secret Store, guide §4), private keys are never copied (SEC-02), and profile files are not encrypted. Launch requires actual write access to every listed file and directory — otherwise the app refuses to start before opening any store or running migrations.
+
+### 1.3 Profile identity — `profile.id`
+
+A separate file in the profile folder: one strictly validated random UUID v4, not a secret. Created atomically on first launch and verified before any database is opened, migrations run, or other files are created; a creation error aborts the launch. A missing `profile.id` next to any other profile artifact, or an empty/invalid value, blocks the launch without regeneration — otherwise the addressing of saved secrets would silently break. The file is read before the configuration: a corrupted `config.json` never changes the identity. `profile.id` is not part of the Settings projection, `AppInfo`, host export/import, or logs. The installed profile and dev mode don't get a `profile.id` — their secrets keep the legacy `LucidSSH/{hostId}` address. Rationale: `docs/agent/adr/0020-portable-profile-and-credential-identity.md`.
 
 ---
 
@@ -73,6 +85,8 @@ CREATE TABLE hosts (
 Before document version 1.2 it lived in `config.json` as `history.perHostDisabled: number[]`
 (negative, no UI) — moved to a column for `ON DELETE CASCADE` cleanup on host deletion.
 Rationale: `docs/agent/adr/0015-host-scoped-state-lives-with-the-host.md`.
+
+`credential_id` changes only on two events: host creation/import (a new UUID) and a change of SSH destination (`address`/`port`/`username`/`auth_method`/`key_path`). In a portable profile, a destination change mints a new `credential_id` and detaches the record from the shared secret of profile copies (the old secret is left untouched); in the installed build the old secret is deleted or replaced. Changing only the password/passphrase without a destination change keeps the identity and updates the shared secret.
 
 ### 2.3 The `host_dismissed_alerts` table
 
