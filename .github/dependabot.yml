@@ -10,6 +10,14 @@ updates:
       day: "monday"
     open-pull-requests-limit: 5
 
+    ignore:
+      - dependency-name: "electron"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
+
     groups:
       routine-updates:
         applies-to: version-updates
