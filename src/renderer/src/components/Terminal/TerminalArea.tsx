@@ -36,6 +36,7 @@ import { useConfig, getCurrentConfig } from '@/stores/config';
 import { usePanels } from '@/stores/panels';
 import { useHosts } from '@/stores/hosts';
 import { useEvents } from '@/stores/events';
+import { visibleAlertIssues } from '@/stores/dashboardAlertState';
 import { setComposerInsertHandler, setComposerValueGetter } from '@/stores/composerBus';
 import { useHotkeys } from '@/hooks/useHotkeys';
 
@@ -118,6 +119,9 @@ export function TerminalArea(): JSX.Element {
 
   const active = sessions.find((s) => s.sessionId === activeSessionId);
   const activeExtras = active ? sessionExtras[active.sessionId] : undefined;
+  // Тикет 02: крестик/мьют закрывают находку до конца Соединения — main может
+  // прислать её снова (null→≥90%), показываем только незакрытые.
+  const issuesToShow = visibleAlertIssues(activeExtras?.dashboardAlert, activeExtras?.closedAlertIssues);
   // CLOG-04: степпер — только для первоначального подключения, не для
   // автопереподключения уже работавшей сессии (см. everConnected выше).
   const activeNeverConnected = active ? !everConnected.current.has(active.sessionId) : false;
@@ -346,12 +350,14 @@ export function TerminalArea(): JSX.Element {
           interactiveProgram={interactivePrograms[active.sessionId]}
         />
       )}
-      {/* DASH-09: health-уведомления — независимы от видимости мини-дашборда (DASH-04),
-          не блокируют ввод, каждая находка закрывается отдельно и только вручную. */}
-      {showTerminal && active && activeExtras?.dashboardAlert && (
+      {/* DASH-09/тикет 02: health-уведомления — независимы от видимости мини-дашборда
+          (DASH-04), не блокируют ввод, каждая находка закрывается отдельно и только
+          вручную; восстановившаяся метрика (<90%) исчезает сама, по null временно
+          скрывается. */}
+      {showTerminal && active && issuesToShow.length > 0 && (
         <DashboardHealthBanner
-          alert={activeExtras.dashboardAlert}
-          metrics={activeExtras.dashboard}
+          alert={{ issues: issuesToShow }}
+          metrics={activeExtras?.dashboard}
           onCloseIssue={(issue) => dismissDashboardAlertIssue(active.sessionId, issue)}
           // HM-11: у Quick Connect (hostId=0) нет строки в hosts.db — персистентная
           // «Больше не показывать» здесь не может жить (.scratch/host-scoped-flags-to-db).

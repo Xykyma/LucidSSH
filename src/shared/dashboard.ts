@@ -46,7 +46,8 @@ export const EMPTY_METRICS: DashboardMetrics = {
 /** DASH-09: красный порог тревоги, общий для CPU/RAM/Disk (DASH-03). */
 export const DASH_RED_THRESHOLD_PERCENT = 90;
 
-/** DASH-09: находки одноразового health-баннера после первого успешного опроса. */
+/** DASH-09/тикет 02: находки health-баннера одного Соединения (per-Connection,
+ *  на Сессию renderer'а их может прийти несколько — при изменении видимости). */
 export type DashboardAlertIssue = 'cpu' | 'ram' | 'disk' | 'rebootRequired';
 
 /** Полный список известных находок — используется для валидации входных данных. */

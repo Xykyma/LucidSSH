@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Dashboard health notifications now follow the server's recovery.** A finding raised at connect used to stay on screen with the current (already normal) percentage in its text — e.g. "High CPU load: 12%" — until the tab was closed. Now the first known value below 90% removes that finding until the next connection (at 90% it stays active), an unknown value (poll failure, exec error, timeout) temporarily hides it without losing it, and a later spike in the same connection doesn't bring it back. Closing or muting a finding now also survives a temporary outage, and any reconnect — including an automatic one in the same tab — clears the previous findings and re-runs the initial check, so a healthy server never shows stale notifications. Mute self-clearing ("Don't show again") now fires only on a known recovered value: an unavailable metric no longer wipes a saved mute, and self-clearing itself never creates a notification in the current connection.
 - **Resetting settings no longer hides active SSH sessions.** Defaults are applied without reloading the window, keeping session tabs, terminal output and the original connections intact.
 
 ## [1.0.3] — 2026-10-23
