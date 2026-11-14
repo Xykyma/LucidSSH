@@ -23,6 +23,7 @@ export const IPC = {
   // --- Буфер обмена (через main, renderer без clipboard-permission) ---
   clipboardRead: 'clipboard:read',
   clipboardWrite: 'clipboard:write',
+  hostFormMenuShow: 'hosts:show-edit-menu',
 
   // --- Настройки (config.json, без секретов) ---
   configGet: 'config:get',

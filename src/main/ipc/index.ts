@@ -1,4 +1,4 @@
-import { app, clipboard, ipcMain, shell } from 'electron';
+import { app, clipboard, ipcMain, Menu, shell } from 'electron';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IPC, type AppInfo } from '@shared/ipc';
@@ -9,10 +9,11 @@ import {
   isValidNamespace,
   listLanguages,
   localesDir,
-  FALLBACK_LANGUAGE
+  FALLBACK_LANGUAGE,
+  t
 } from '../i18n';
 import { forceCloseWindow, getMainWindow } from '../window/mainWindow';
-import { assertSenderIsMainWindow, assertString } from './validate';
+import { assertSenderIsMainWindow, assertString, IpcValidationError } from './validate';
 
 /**
  * Регистрация всех IPC-обработчиков. Один канал — одна операция (SEC-05).
@@ -130,6 +131,18 @@ export function registerIpcHandlers(): void {
     assertSenderIsMainWindow(event);
     if (typeof text !== 'string' || text.length > 1_000_000) return;
     clipboard.writeText(text);
+  });
+
+  ipcMain.handle(IPC.hostFormMenuShow, (event, canCopy: unknown): void => {
+    assertSenderIsMainWindow(event);
+    if (typeof canCopy !== 'boolean') throw new IpcValidationError('canCopy: boolean expected');
+    const win = getMainWindow();
+    if (!win || win.isDestroyed()) return;
+    // canCopy is a UI hint only; Chromium still enforces password-field restrictions.
+    Menu.buildFromTemplate([
+      { role: 'copy', label: t('ctx.copy'), enabled: canCopy },
+      { role: 'paste', label: t('ctx.paste') }
+    ]).popup({ window: win });
   });
 
   // --- Управление окном (fire-and-forget) ---

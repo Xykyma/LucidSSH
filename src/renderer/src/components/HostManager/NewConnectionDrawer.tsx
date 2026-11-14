@@ -375,7 +375,17 @@ export function NewConnectionDrawer(): JSX.Element | null {
           }
         }}
         onClick={(e) => e.stopPropagation()}
+        onContextMenu={(e) => {
+          const input = e.target;
+          if (!(input instanceof HTMLInputElement) || input.readOnly || input.disabled) return;
+          e.preventDefault();
+          const canCopy = input.type !== 'password' && input.selectionStart !== input.selectionEnd;
+          void window.lucidSSH.showHostFormMenu(canCopy).catch(() => {
+            // The window may close before main handles the menu request.
+          });
+        }}
         role="dialog"
+        data-host-form
         aria-modal="true"
         aria-label={editHost ? t('conn.titleEdit') : t('conn.titleNew')}
       >
