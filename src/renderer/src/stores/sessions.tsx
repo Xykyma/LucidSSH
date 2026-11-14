@@ -32,7 +32,7 @@ export interface SessionExtras {
   authPrompt?: AuthPromptRequest;
   breadcrumb?: Breadcrumb;
   dashboard?: DashboardMetrics;
-  /** DASH-09: одноразовый health-баннер — очищается закрытием (×), не приходит повторно. */
+  /** DASH-09: одноразовые health-уведомления — каждая находка очищается своим ×. */
   dashboardAlert?: DashboardAlert;
   error?: ErrorExplanation;
   /** Локальное переименование вкладки (TERM-02); имя не уходит в main. */
@@ -47,9 +47,8 @@ interface SessionsStore {
   hostKeyPrompt: HostKeyPrompt | null;
   sessionExtras: Record<string, SessionExtras>;
   dismissError: (sessionId: string) => void;
-  dismissDashboardAlert: (sessionId: string) => void;
-  /** DASH-09: «Больше не показывать» для одной находки — убирает её из уже
-   *  открытого баннера (персистентность на диске делает вызывающий код). */
+  /** DASH-09/10: закрытие или мьют одной находки — убирает её из уже открытых
+   *  уведомлений (персистентность мьюта на диске делает вызывающий код). */
   dismissDashboardAlertIssue: (sessionId: string, issue: DashboardAlertIssue) => void;
   connect: (hostId: number) => Promise<void>;
   /** HM-11: подключение по `user@host[:port]` без сохранённого хоста. */
@@ -160,11 +159,6 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
 
   const dismissError = useCallback(
     (sessionId: string) => clearExtraField(sessionId, 'error'),
-    [clearExtraField]
-  );
-
-  const dismissDashboardAlert = useCallback(
-    (sessionId: string) => clearExtraField(sessionId, 'dashboardAlert'),
     [clearExtraField]
   );
 
@@ -297,7 +291,6 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       hostKeyPrompt,
       sessionExtras,
       dismissError,
-      dismissDashboardAlert,
       dismissDashboardAlertIssue,
       connect,
       connectQuick,
@@ -317,7 +310,6 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       hostKeyPrompt,
       sessionExtras,
       dismissError,
-      dismissDashboardAlert,
       dismissDashboardAlertIssue,
       connect,
       connectQuick,

@@ -53,7 +53,6 @@ export function TerminalArea(): JSX.Element {
     closeTab,
     sessionExtras,
     dismissError,
-    dismissDashboardAlert,
     dismissDashboardAlertIssue,
     answerAuthPrompt
   } = useSessions();
@@ -347,13 +346,13 @@ export function TerminalArea(): JSX.Element {
           interactiveProgram={interactivePrograms[active.sessionId]}
         />
       )}
-      {/* DASH-09: health-баннер — независим от видимости мини-дашборда (DASH-04),
-          не блокирует ввод, закрывается только вручную (см. DashboardHealthBanner). */}
+      {/* DASH-09: health-уведомления — независимы от видимости мини-дашборда (DASH-04),
+          не блокируют ввод, каждая находка закрывается отдельно и только вручную. */}
       {showTerminal && active && activeExtras?.dashboardAlert && (
         <DashboardHealthBanner
           alert={activeExtras.dashboardAlert}
           metrics={activeExtras.dashboard}
-          onClose={() => dismissDashboardAlert(active.sessionId)}
+          onCloseIssue={(issue) => dismissDashboardAlertIssue(active.sessionId, issue)}
           // HM-11: у Quick Connect (hostId=0) нет строки в hosts.db — персистентная
           // «Больше не показывать» здесь не может жить (.scratch/host-scoped-flags-to-db).
           onDismissIssue={
