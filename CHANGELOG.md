@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Dashboard health findings now appear as independent notifications.** Each finding has its own close button, which hides only that finding for the current session without creating a persistent mute. "Don't show again" still mutes only its finding for the saved host; Quick Connect keeps the close buttons but has no persistent mute.
 - **Editing a host's server, login, auth method or key file now discards the saved secret unless a new one is entered.** Previously only an auth-method switch cleared it, so changing an address or login could silently send the old server's password to a different destination. In the upcoming portable build a destination change instead detaches the host from the profile's shared secret under a fresh credential identity — other copies of the profile keep access to the original server. Editing anything else (name, group, note, guard/history settings, jump host) keeps the secret; entering a new password/passphrase alone updates it for every copy. The host form explains the reset under the auth-method switch.
 
 ### Added
