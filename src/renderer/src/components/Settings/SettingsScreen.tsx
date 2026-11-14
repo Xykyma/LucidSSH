@@ -59,7 +59,7 @@ function sizeKey(px: number): 'small' | 'medium' | 'large' {
 
 export function SettingsScreen({ onOpenGuide }: { onOpenGuide: () => void }): JSX.Element {
   const { t } = useTranslation();
-  const { config, update } = useConfig();
+  const { config, update, reset } = useConfig();
   const { closeSettings, settingsSection } = usePanels();
   const isSection = (v: string | null): v is Section =>
     v !== null && sectionKeys.includes(v as Section);
@@ -83,11 +83,12 @@ export function SettingsScreen({ onOpenGuide }: { onOpenGuide: () => void }): JS
   );
 
   const doReset = async (): Promise<void> => {
-    await window.lucidSSH.resetConfig();
+    await reset();
+    const c = getCurrentConfig();
+    if (c) applyTerminalConfig(c);
     setResetConfirmOpen(false);
-    // Перечитываем конфиг из main через полную перезагрузку окна — проще и надёжнее,
-    // чем ре-инициализировать все сторы.
-    window.location.reload();
+    // Перезагрузка окна потеряла бы вкладки и терминалы при живых SSH-соединениях.
+    closeSettings();
   };
 
   if (!config) return <div className="fixed inset-0 z-50 bg-bg-base" />;

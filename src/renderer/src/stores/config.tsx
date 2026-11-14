@@ -17,6 +17,7 @@ export function getCurrentConfig(): Settings | null {
 interface ConfigStore {
   config: Settings | null;
   update: (path: string, value: string | number | boolean) => Promise<void>;
+  reset: () => Promise<void>;
   /** SET-10: перепривязка хоткея с проверкой конфликтов (issue #1). При
    *  конфликте состояние стора не меняется — возвращает, кто уже владеет
    *  комбинацией, чтобы секция «Горячие клавиши» показала сообщение. */
@@ -44,6 +45,12 @@ export function ConfigProvider({ children }: { children: ReactNode }): JSX.Eleme
 
   const update = useCallback(async (path: string, value: string | number | boolean) => {
     const next = await window.lucidSSH.updateConfig(path, value);
+    currentConfig = next;
+    setConfig(next);
+  }, []);
+
+  const reset = useCallback(async () => {
+    const next = await window.lucidSSH.resetConfig();
     currentConfig = next;
     setConfig(next);
   }, []);
@@ -76,8 +83,8 @@ export function ConfigProvider({ children }: { children: ReactNode }): JSX.Eleme
   }, []);
 
   const value = useMemo<ConfigStore>(
-    () => ({ config, update, updateHotkey, resetHotkeys, markHint, resetHints }),
-    [config, update, updateHotkey, resetHotkeys, markHint, resetHints]
+    () => ({ config, update, reset, updateHotkey, resetHotkeys, markHint, resetHints }),
+    [config, update, reset, updateHotkey, resetHotkeys, markHint, resetHints]
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
