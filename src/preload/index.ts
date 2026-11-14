@@ -61,6 +61,8 @@ const api = {
   // --- Буфер обмена ---
   clipboardRead: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),
   clipboardWrite: (text: string): void => ipcRenderer.send(IPC.clipboardWrite, text),
+  showHostFormMenu: (canCopy: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC.hostFormMenuShow, canCopy),
 
   // --- Настройки ---
   getConfig: (): Promise<Settings> => ipcRenderer.invoke(IPC.configGet),

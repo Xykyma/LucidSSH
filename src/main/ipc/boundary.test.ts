@@ -59,7 +59,8 @@ vi.mock('electron', () => {
     },
     shell: { openExternal: vi.fn() },
     dialog: { showOpenDialog: vi.fn(), showSaveDialog: vi.fn() },
-    clipboard: { readText: vi.fn(), writeText: vi.fn() }
+    clipboard: { readText: vi.fn(), writeText: vi.fn() },
+    Menu: { buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })) }
   };
 });
 
@@ -324,6 +325,7 @@ const fakeMainWindow = {
   maximize: vi.fn(),
   unmaximize: vi.fn(),
   isMaximized: vi.fn(() => false),
+  isDestroyed: vi.fn(() => false),
   close: vi.fn()
 };
 
@@ -572,6 +574,44 @@ describe('пункт 1 — сторож отправителя (параметр
   // — кейс `hosts:delete` из it.each выше падал с сообщением об ошибке
   // валидатора id на undefined вместо «IPC from unknown sender rejected» (и
   // repo.getHost/deleteHost получали вызов до отказа). Правка возвращена.
+});
+
+describe('host form edit menu — узкий канал без кода, ролей и содержимого поля', () => {
+  it.each([undefined, null, 0, 1, 'true', {}, []].map((value) => ({ value })))(
+    'отклоняет canCopy=$value до открытия меню',
+    async ({ value }) => {
+      const result = await invoke(IPC.hostFormMenuShow, mainEvent(), value);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(IpcValidationError);
+      expect(electron.Menu.buildFromTemplate).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([false, true])('canCopy=%s влияет только на нативный Copy', async (canCopy) => {
+    const result = await invoke(IPC.hostFormMenuShow, mainEvent(), canCopy);
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(electron.Menu.buildFromTemplate).toHaveBeenCalledWith([
+      expect.objectContaining({ role: 'copy', enabled: canCopy }),
+      expect.objectContaining({ role: 'paste' })
+    ]);
+    const menu = vi.mocked(electron.Menu.buildFromTemplate).mock.results.at(-1)!.value;
+    expect(menu.popup).toHaveBeenCalledWith({ window: fakeMainWindow });
+  });
+
+  it('отклоняет запрос из subframe до открытия меню', async () => {
+    const result = await invoke(IPC.hostFormMenuShow, subframeEvent(), true);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(IpcValidationError);
+    expect(electron.Menu.buildFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('не открывает меню у уже уничтоженного окна', async () => {
+    fakeMainWindow.isDestroyed.mockReturnValueOnce(true);
+    expect(await invoke(IPC.hostFormMenuShow, mainEvent(), false)).toEqual({ ok: true, value: undefined });
+    expect(electron.Menu.buildFromTemplate).not.toHaveBeenCalled();
+  });
 });
 
 // NFR-05 (тикет 06): AppInfo сообщает portable-признаки, не раскрывая путь,
