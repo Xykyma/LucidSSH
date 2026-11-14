@@ -6,6 +6,7 @@ import type { DashboardAlert, DashboardAlertIssue, DashboardMetrics } from '@sha
 import type { ErrorExplanation } from '@shared/content';
 import { parseQuickConnect } from '@shared/quickConnect';
 import { enqueueHostKeyPrompt, removeHostKeyPrompt } from './hostKeyQueue';
+import { alertAfterEvent, closedAfterDismiss } from './dashboardAlertState';
 
 /**
  * Стор SSH-сессий: список вкладок, активная сессия, ожидающие подтверждения
@@ -32,8 +33,13 @@ export interface SessionExtras {
   authPrompt?: AuthPromptRequest;
   breadcrumb?: Breadcrumb;
   dashboard?: DashboardMetrics;
-  /** DASH-09: одноразовые health-уведомления — каждая находка очищается своим ×. */
+  /** DASH-09/тикет 02: видимый набор находок текущего Соединения — main шлёт
+   *  событие при каждом изменении (первоначальная проверка, восстановление
+   *  метрики <90%, временное скрытие по null). */
   dashboardAlert?: DashboardAlert;
+  /** Тикет 02: находки, закрытые крестиком/мьютом до конца Соединения —
+   *  повторное событие от main их не возвращает (в т.ч. после null→≥90%). */
+  closedAlertIssues?: DashboardAlertIssue[];
   error?: ErrorExplanation;
   /** Локальное переименование вкладки (TERM-02); имя не уходит в main. */
   label?: string;
@@ -47,8 +53,9 @@ interface SessionsStore {
   hostKeyPrompt: HostKeyPrompt | null;
   sessionExtras: Record<string, SessionExtras>;
   dismissError: (sessionId: string) => void;
-  /** DASH-09/10: закрытие или мьют одной находки — убирает её из уже открытых
-   *  уведомлений (персистентность мьюта на диске делает вызывающий код). */
+  /** DASH-09/10/тикет 02: крестик или мьют одной находки — закрывает её до
+   *  конца Соединения (повторные события от main её не возвращают);
+   *  персистентность мьюта на диске делает вызывающий код. */
   dismissDashboardAlertIssue: (sessionId: string, issue: DashboardAlertIssue) => void;
   connect: (hostId: number) => Promise<void>;
   /** HM-11: подключение по `user@host[:port]` без сохранённого хоста. */
@@ -112,6 +119,15 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
         if (status !== 'connecting') {
           clearExtraField(sessionId, 'authPrompt');
         }
+        // Тикет 02: граница Соединения — старые находки и временные закрытия
+        // не переживают переподключение (в т.ч. автоматическое в той же
+        // Сессии): main начнёт первоначальную проверку заново и пришлёт новый
+        // alert, только если находки остались. При пустом результате проверки
+        // события нет и старый alert не должен остаться.
+        if (status === 'connecting' || status === 'reconnecting') {
+          clearExtraField(sessionId, 'dashboardAlert');
+          clearExtraField(sessionId, 'closedAlertIssues');
+        }
         // HM-11: первое разрешение (успех или неуспех) — предложить сохранить хост.
         if (status === 'connected' || status === 'disconnected') {
           const pending = quickConnectPending.current.get(sessionId);
@@ -140,7 +156,11 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
       setExtraField(sessionId, 'dashboard', metrics);
     });
     const offDashAlert = window.lucidSSH.onDashboardAlert((sessionId, alert) => {
-      setExtraField(sessionId, 'dashboardAlert', alert);
+      // Тикет 02: пустой набор от main (все находки восстановлены/скрыты)
+      // очищает поле целиком — без пустого контейнера в UI.
+      const next = alertAfterEvent(alert.issues);
+      if (next) setExtraField(sessionId, 'dashboardAlert', next);
+      else clearExtraField(sessionId, 'dashboardAlert');
     });
     const offError = window.lucidSSH.onError((sessionId, explanation) => {
       setExtraField(sessionId, 'error', explanation);
@@ -165,13 +185,16 @@ export function SessionsProvider({ children }: { children: ReactNode }): JSX.Ele
   const dismissDashboardAlertIssue = useCallback(
     (sessionId: string, issue: DashboardAlertIssue) => {
       setSessionExtras((prev) => {
-        const alert = prev[sessionId]?.dashboardAlert;
-        if (!alert) return prev;
-        const issues = alert.issues.filter((i) => i !== issue);
-        const entry = { ...prev[sessionId] };
-        if (issues.length > 0) entry.dashboardAlert = { issues };
-        else delete entry.dashboardAlert;
-        return { ...prev, [sessionId]: entry };
+        const entry = prev[sessionId];
+        if (!entry) return prev;
+        const next: SessionExtras = { ...entry };
+        // Тикет 02: закрытие действует до конца Соединения — даже если main
+        // позже вернёт находку (null→≥90%), повторно она не показывается.
+        next.closedAlertIssues = closedAfterDismiss(entry.closedAlertIssues, issue);
+        const issues = entry.dashboardAlert?.issues.filter((i) => i !== issue) ?? [];
+        if (issues.length > 0) next.dashboardAlert = { issues };
+        else delete next.dashboardAlert;
+        return { ...prev, [sessionId]: next };
       });
     },
     []

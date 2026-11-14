@@ -85,6 +85,16 @@ interface DashboardState {
   /** DASH-09: решение о health-баннере уже принято (успех или нет) — после
    *  этого REBOOT_CHECK_COMMAND больше не добавляется и баннер не повторяется. */
   firstSuccessDone: boolean;
+  /** Тикет 02: первоначальные находки текущего Соединения (после фильтра
+   *  мьютов) — фиксированы на первом успешном опросе, новых в этом Соединении
+   *  не появляется. */
+  alertIssues: DashboardAlertIssue[];
+  /** Тикет 02: метрики, окончательно снятые первым известным значением <90%,
+   *  до следующего Соединения. */
+  recovered: Set<MetricIssue>;
+  /** Тикет 02: последний отправленный видимый набор — событие шлём только
+   *  при изменении. */
+  sentIssues: DashboardAlertIssue[];
 }
 
 const dashboards = new Map<string, DashboardState>();
@@ -102,6 +112,24 @@ function parseRebootRequired(output: string): boolean {
   return /^REBOOT\b/m.test(output);
 }
 
+/** Метрические находки с естественным порогом восстановления (тикет 02). */
+const METRIC_ISSUES = ['cpu', 'ram', 'disk'] as const;
+type MetricIssue = (typeof METRIC_ISSUES)[number];
+
+/** Доля метрики в процентах; RAM — вычисленная доля, не округлённая строка. */
+function metricPercent(metrics: DashboardMetrics, issue: MetricIssue): number | null {
+  switch (issue) {
+    case 'cpu':
+      return metrics.cpuPercent;
+    case 'ram':
+      return metrics.ramUsedMb !== null && metrics.ramTotalMb
+        ? (metrics.ramUsedMb / metrics.ramTotalMb) * 100
+        : null;
+    case 'disk':
+      return metrics.diskPercent;
+  }
+}
+
 /** DASH-09: красные пороги (DASH-03) + reboot-required → находки для баннера. */
 function computeAlertIssues(metrics: DashboardMetrics, rebootRequired: boolean): DashboardAlertIssue[] {
   const issues: DashboardAlertIssue[] = [];
@@ -115,21 +143,26 @@ function computeAlertIssues(metrics: DashboardMetrics, rebootRequired: boolean):
 }
 
 /**
- * DASH-09: «Больше не показывать» снимается сам собой, как только находка
- * перестаёт проявляться (self-clearing snooze) — иначе разовое нажатие
- * навсегда глушило бы предупреждение и для будущих, никак не связанных
- * повторений той же проблемы (диск снова забился спустя месяц, потребовался
- * новый reboot после следующих обновлений), а отменить mute было бы негде —
- * в UI нет отдельного экрана для этого (решение разработчика от 23.07.2026).
+ * DASH-10 (тикет 02): мьют сохраняется, пока находка проявляется (значение
+ * ≥90% либо неизвестно — null/exec-fail/timeout ничего не доказывают), и
+ * снимается сам собой по первому ИЗВЕСТНОМУ значению <90% на любом опросе —
+ * иначе разовое нажатие навсегда глушило бы предупреждение и для будущих,
+ * никак не связанных повторений той же проблемы (диск снова забился спустя
+ * месяц), а отменить mute было бы негде — в UI нет отдельного экрана для
+ * этого (решение разработчика от 23.07.2026). Самосброс мьюта сам по себе
+ * уведомление в текущем Соединении не создаёт. rebootFlagged === null — reboot
+ * на этом опросе не проверялся (после первого успешного) — мьют сохраняем.
  */
-function applyDismissals(
-  rawIssues: DashboardAlertIssue[],
-  dismissed: DashboardAlertIssue[]
-): { keepDismissed: DashboardAlertIssue[]; issuesToShow: DashboardAlertIssue[] } {
-  return {
-    keepDismissed: dismissed.filter((issue) => rawIssues.includes(issue)),
-    issuesToShow: rawIssues.filter((issue) => !dismissed.includes(issue))
-  };
+function mutesToKeep(
+  dismissed: DashboardAlertIssue[],
+  metrics: DashboardMetrics,
+  rebootFlagged: boolean | null
+): DashboardAlertIssue[] {
+  return dismissed.filter((issue) => {
+    if (issue === 'rebootRequired') return rebootFlagged !== false;
+    const value = metricPercent(metrics, issue);
+    return value === null || value >= DASH_RED_THRESHOLD_PERCENT;
+  });
 }
 
 function parseMetrics(output: string): DashboardMetrics {
@@ -182,6 +215,58 @@ function clampPercent(n: number | null): number | null {
   return Math.max(0, Math.min(100, n));
 }
 
+function sameIssues(a: DashboardAlertIssue[], b: DashboardAlertIssue[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Тикет 02 (DASH-09/10) — жизненный цикл находок в пределах одного Соединения:
+ * первоначальная проверка выполняется один раз, на первом успешном опросе
+ * (частичный ответ её завершает — метрика, неизвестная в этот момент, позднее
+ * уведомлений не создаёт; полностью неудачный опрос её не расходует). Первое
+ * известное значение <90% окончательно снимает находку метрики до следующего
+ * Соединения, ≥90% её сохраняет; неизвестное значение (null, exec-fail,
+ * timeout) временно скрывает уведомление без потери находки и не трогает мьют.
+ * Повторный рост после восстановления/закрытия/мьюта уведомление не создаёт.
+ * reboot-required опросами метрик не восстанавливается (частота проверки
+ * прежняя, DASH-07/09). Видимый набор уходит в renderer только при изменении.
+ */
+function processResults(
+  state: DashboardState,
+  sessionId: string,
+  metrics: DashboardMetrics,
+  rebootFlagged: boolean | null,
+  allowInitial: boolean
+): void {
+  // DASH-10: self-clearing мьюта — только по известному значению <90%.
+  const dismissed = listDismissedAlerts(state.hostId);
+  const keep = mutesToKeep(dismissed, metrics, rebootFlagged);
+  if (keep.length !== dismissed.length) {
+    replaceDismissedAlerts(state.hostId, keep);
+  }
+
+  if (!state.firstSuccessDone) {
+    if (!allowInitial) return; // неуспешный опрос первоначальную проверку не расходует
+    state.firstSuccessDone = true;
+    const rawIssues = computeAlertIssues(metrics, rebootFlagged ?? false);
+    state.alertIssues = rawIssues.filter((issue) => !keep.includes(issue));
+  }
+
+  for (const issue of METRIC_ISSUES) {
+    if (!state.alertIssues.includes(issue) || state.recovered.has(issue)) continue;
+    const value = metricPercent(metrics, issue);
+    if (value !== null && value < DASH_RED_THRESHOLD_PERCENT) state.recovered.add(issue);
+  }
+  const visible = state.alertIssues.filter((issue) => {
+    if (issue === 'rebootRequired') return true; // метриками не восстанавливается
+    return !state.recovered.has(issue) && metricPercent(metrics, issue) !== null;
+  });
+  if (!sameIssues(visible, state.sentIssues)) {
+    state.sentIssues = visible;
+    sendAlert(sessionId, { issues: visible });
+  }
+}
+
 function poll(sessionId: string): void {
   const state = dashboards.get(sessionId);
   if (!state || state.running) return;
@@ -209,6 +294,9 @@ function poll(sessionId: string): void {
 
   const timeout = setTimeout(() => {
     logProblem('clog.dashboardTimeout');
+    // Тикет 02: timeout ничего не доказывает — метрики временно скрываются,
+    // находки и мьюты сохраняются.
+    processResults(state, sessionId, { ...EMPTY_METRICS }, null, false);
     finish({ ...EMPTY_METRICS });
   }, EXEC_TIMEOUT_MS);
 
@@ -221,7 +309,9 @@ function poll(sessionId: string): void {
     if (err) {
       clearTimeout(timeout);
       logProblem('clog.dashboardExecError', { error: err.message });
-      finish({ ...EMPTY_METRICS }); // канал недоступен → «—» (DASH-05)
+      // Канал недоступен → «—» (DASH-05); уведомления метрик временно скрыты.
+      processResults(state, sessionId, { ...EMPTY_METRICS }, null, false);
+      finish({ ...EMPTY_METRICS });
       return;
     }
     stream.on('data', (d: Buffer) => {
@@ -230,6 +320,9 @@ function poll(sessionId: string): void {
     });
     stream.on('close', () => {
       clearTimeout(timeout);
+      // Timeout мог уже обработать опрос (finish → settled): поздний close по
+      // протухшим данным не должен повторно трогать находки и мьюты (тикет 02).
+      if (settled) return;
       const metrics = parseMetrics(output);
       metrics.pingMs = pingMs;
       const empty =
@@ -244,17 +337,13 @@ function poll(sessionId: string): void {
           stdout: output.trim().slice(0, 200) || '—',
           stderr: stderrOut.trim().slice(0, 200) || '—'
         });
-      } else if (checkReboot && !state.firstSuccessDone) {
-        // DASH-09: первый успешный опрос — одноразовое решение о health-баннере.
-        state.firstSuccessDone = true;
-        const rawIssues = computeAlertIssues(metrics, parseRebootRequired(output));
-        const dismissed = listDismissedAlerts(state.hostId);
-        const { keepDismissed, issuesToShow } = applyDismissals(rawIssues, dismissed);
-        if (keepDismissed.length !== dismissed.length) {
-          // Часть замьюченных находок больше не проявляется — снимаем mute (self-clearing).
-          replaceDismissedAlerts(state.hostId, keepDismissed);
-        }
-        if (issuesToShow.length > 0) sendAlert(sessionId, { issues: issuesToShow });
+        // Пустой ответ первоначальную проверку не расходует, но скрывает уже
+        // обнаруженные метрические уведомления (тикет 02).
+        processResults(state, sessionId, metrics, null, false);
+      } else {
+        // DASH-09: первый успешный опрос — одноразовое решение о health-баннере;
+        // дальше тот же путь обновляет видимость находок и self-clearing мьютов.
+        processResults(state, sessionId, metrics, checkReboot ? parseRebootRequired(output) : null, true);
       }
       finish(metrics);
     });
@@ -279,7 +368,10 @@ export function startDashboard(
     running: false,
     logger,
     problemLogged: false,
-    firstSuccessDone: false
+    firstSuccessDone: false,
+    alertIssues: [],
+    recovered: new Set(),
+    sentIssues: []
   });
   poll(sessionId); // первый замер сразу
 }
@@ -295,9 +387,9 @@ export function stopDashboard(sessionId: string): void {
 /** Экспорт парсера для юнит-тестов (DASH-02). */
 export const parseMetricsForTest = parseMetrics;
 
-/** Экспорт для юнит-тестов (DASH-09). */
+/** Экспорт для юнит-тестов (DASH-09/10). */
 export const parseRebootRequiredForTest = parseRebootRequired;
 export const computeAlertIssuesForTest = computeAlertIssues;
-export const applyDismissalsForTest = applyDismissals;
+export const mutesToKeepForTest = mutesToKeep;
 export const METRICS_COMMAND_FOR_TEST = METRICS_COMMAND;
 export const REBOOT_CHECK_COMMAND_FOR_TEST = REBOOT_CHECK_COMMAND;

@@ -4,9 +4,15 @@ import type { DashboardAlertIssue } from '@shared/dashboard';
 import { DashboardHealthBanner } from './DashboardHealthBanner';
 import { TerminalArea } from './TerminalArea';
 
-const { dismissDashboardAlertIssue, ipcDismiss } = vi.hoisted(() => ({
+const { dismissDashboardAlertIssue, ipcDismiss, sessionExtras } = vi.hoisted(() => ({
   dismissDashboardAlertIssue: vi.fn(),
-  ipcDismiss: vi.fn()
+  ipcDismiss: vi.fn(),
+  sessionExtras: {
+    'session-1': {
+      dashboardAlert: { issues: ['cpu', 'rebootRequired'] as DashboardAlertIssue[] },
+      closedAlertIssues: [] as DashboardAlertIssue[]
+    }
+  }
 }));
 
 vi.mock('react', async (importOriginal) => {
@@ -29,9 +35,7 @@ vi.mock('@/stores/sessions', () => ({
     activeSessionId: 'session-1',
     reconnect: vi.fn(),
     closeTab: vi.fn(),
-    sessionExtras: {
-      'session-1': { dashboardAlert: { issues: ['cpu', 'rebootRequired'] } }
-    },
+    sessionExtras,
     dismissError: vi.fn(),
     dismissDashboardAlertIssue,
     answerAuthPrompt: vi.fn()
@@ -79,6 +83,7 @@ vi.mock('./XtermView', () => ({
 }));
 
 type BannerElement = ReactElement<{
+  alert: { issues: DashboardAlertIssue[] };
   children?: ReactNode;
   onCloseIssue: (issue: DashboardAlertIssue) => void;
   onDismissIssue: ((issue: DashboardAlertIssue) => void) | undefined;
@@ -110,5 +115,17 @@ describe('TerminalArea health notifications', () => {
     banner?.props.onDismissIssue?.('rebootRequired');
     expect(ipcDismiss).toHaveBeenCalledExactlyOnceWith(42, 'rebootRequired');
     expect(dismissDashboardAlertIssue).toHaveBeenLastCalledWith('session-1', 'rebootRequired');
+  });
+
+  it('скрывает находки, закрытые крестиком/мьютом до конца Соединения', () => {
+    sessionExtras['session-1'].closedAlertIssues = ['cpu'];
+    const banner = findBanner(TerminalArea());
+    // main мог прислать находку снова (null → ≥90%) — закрытая не показывается
+    expect(banner?.props.alert.issues).toEqual(['rebootRequired']);
+  });
+
+  it('не рендерит баннер, когда все находки закрыты', () => {
+    sessionExtras['session-1'].closedAlertIssues = ['cpu', 'rebootRequired'];
+    expect(findBanner(TerminalArea())).toBeUndefined();
   });
 });

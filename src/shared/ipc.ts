@@ -149,7 +149,7 @@ export const IPC = {
   evConfirmWindowClose: 'ev:confirm-window-close',
   evBreadcrumb: 'ev:breadcrumb',
   evDashboard: 'ev:dashboard',
-  evDashboardAlert: 'ev:dashboard-alert', // DASH-09 — одноразовый health-баннер
+  evDashboardAlert: 'ev:dashboard-alert', // DASH-09/тикет 02 — видимый набор health-находок (per-Connection, при изменении)
   evError: 'ev:error',
   evUpdateStatus: 'ev:update-status',
   evHistoryRecorded: 'ev:history-recorded', // HistoryDrawer перечитывает список, если открыт
