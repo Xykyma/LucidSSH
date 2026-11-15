@@ -1,9 +1,9 @@
-# LucidSSH for Windows — Data Structures Specification
+# LucidSSH — Data Structures Specification
 
 | Field | Value |
 |---|---|
-| Document version | 1.3 |
-| Date | November 13, 2026 |
+| Document version | 1.4 |
+| Date | November 15, 2026 |
 | Purpose | DB schemas, built-in database formats, IPC contracts, and settings format for Claude Code |
 | Base documents | `TZ.md`, `Security_Guide.md` |
 
@@ -17,21 +17,21 @@
 |---|---|---|---|
 | Hosts and groups | SQLite | `%APPDATA%\LucidSSH\hosts.db` | No — installed build references `LucidSSH/{hostId}`; a portable profile references `LucidSSH/{profileId}/{credentialId}` |
 | Command history | SQLite | `%APPDATA%\LucidSSH\history.db` | No — secrets are masked (HIST-07) |
-| Passwords and passphrases | Windows Credential Manager | system | Yes — via keytar |
+| Passwords and passphrases | Windows Credential Manager / Linux Secret Service | system | Yes — via keytar; no file-based fallback |
 | Known hosts | File | `%APPDATA%\LucidSSH\known_hosts` | No |
 | Settings | JSON | `%APPDATA%\LucidSSH\config.json` | No |
 | Error database | Bundled with the package | `assets/errors.core.json` + `assets/locales/{lang}/errors.json` | No |
 | Command catalog | Bundled with the package | `assets/commands.core.json` + `assets/locales/{lang}/commands.json` | No |
 
-Files are created with access restricted to the current Windows user (as far as the OS supports it). All SQL queries are parameterized; concatenating values into SQL is forbidden. History and hosts live in **separate** database files, so disabling/clearing history never touches hosts.
+The path table describes the installed Windows build. System-profile files have access restricted to the current user (as far as the OS supports it); a portable profile is not encrypted and depends on the folder permissions and filesystem. All SQL queries are parameterized; concatenating values into SQL is forbidden. History and hosts live in **separate** database files, so disabling/clearing history never touches hosts.
 
 ### 1.1 Two data locations
 
-The installed Windows build and dev mode keep the profile in Electron's system directory (`userData` → `%APPDATA%\LucidSSH`). The portable exe (NFR-05) determines the mode from the running artifact — the `PORTABLE_EXECUTABLE_DIR` environment variable, which electron-builder injects only into the portable build — and keeps the entire profile next to the exe. The system directory is never redirected globally; a portable profile never reads, copies, or modifies the installed profile. Only the main process knows the mode: the renderer gets neither the profile path nor a mode flag.
+The installed Windows build, Linux builds, and dev mode keep the profile in Electron's `app.getPath('userData')`: `%APPDATA%\LucidSSH` on Windows, usually `~/.config/LucidSSH` on Linux. The portable exe (NFR-05) determines the mode from the running artifact — `PORTABLE_EXECUTABLE_DIR` in a packaged Windows build — and keeps the entire profile next to the original exe. The system directory is never redirected globally; a portable profile never reads, copies, or modifies the installed profile. Main selects the directory: the renderer gets no profile path and cannot switch modes.
 
 ### 1.2 Portable profile contents
 
-A portable profile folder contains: `profile.id` (§1.3), `config.json`, `hosts.db` and `history.db` (with `<db>.backup-vN` sidecar copies), `known_hosts`, and the `backups/` directory. The exe itself and unrelated files don't make a folder a profile: a new profile is recognized only when `profile.id` and all known data artifacts are absent. Passwords and passphrases are not part of the folder (Secret Store, guide §4), private keys are never copied (SEC-02), and profile files are not encrypted. Launch requires actual write access to every listed file and directory — otherwise the app refuses to start before opening any store or running migrations.
+A portable profile folder contains: `profile.id` (§1.3), `config.json`, `hosts.db` and `history.db` (with `<db>.backup-vN` sidecar copies), `known_hosts`, and the `backups/` directory. The exe itself and unrelated files don't make a folder a profile: a new profile is recognized only when `profile.id` and all known data artifacts are absent. Passwords and passphrases are not part of the folder (Secret Store, guide §10), private keys are never copied (SEC-02), and profile files are not encrypted. Launch requires actual write access to every listed file and directory — otherwise the app refuses to start before opening any store or running migrations.
 
 ### 1.3 Profile identity — `profile.id`
 
@@ -86,7 +86,7 @@ Before document version 1.2 it lived in `config.json` as `history.perHostDisable
 (negative, no UI) — moved to a column for `ON DELETE CASCADE` cleanup on host deletion.
 Rationale: `docs/agent/adr/0015-host-scoped-state-lives-with-the-host.md`.
 
-`credential_id` changes only on two events: host creation/import (a new UUID) and a change of SSH destination (`address`/`port`/`username`/`auth_method`/`key_path`). In a portable profile, a destination change mints a new `credential_id` and detaches the record from the shared secret of profile copies (the old secret is left untouched); in the installed build the old secret is deleted or replaced. Changing only the password/passphrase without a destination change keeps the identity and updates the shared secret.
+`credential_id` is assigned by migration v4 to existing hosts and on creation/import on every platform. Afterward it changes only when the SSH destination (`address`/`port`/`username`/`auth_method`/`key_path`) changes in a portable profile: a new UUID detaches the record from the copies' shared secret, leaving the old secret untouched. Installed and Linux builds retain `credential_id` on edits and delete or replace the old secret at `LucidSSH/{hostId}`. Changing only the password/passphrase keeps the identity; in portable it updates the copies' shared secret.
 
 ### 2.3 The `host_dismissed_alerts` table
 
@@ -156,7 +156,9 @@ interface HostInput {
 }
 ```
 
-### 2.5 Relation to Credential Manager
+### 2.5 Relation to the system Secret Store
+
+The example below applies only to installed Windows/Linux profiles, which retain `String(hostId)` as the account. Portable profiles use `profileId/credentialId` (§1.3, §2.2). Callers use `src/main/keychain/` operations; that module selects the account for the active profile.
 
 ```ts
 // keychain/ — the only place that touches secrets
@@ -795,7 +797,7 @@ OpenSSH format (`known_hosts`), managed in main. On first connection, an entry i
 
 ## 9. Cross-cutting rules for every structure
 
-1. Secrets (passwords, passphrases, key contents) — Credential Manager only, never in SQLite/JSON/logs/IPC responses (SEC-01, guide §10, §17).
+1. Passwords and passphrases — only via keytar in the system Secret Store (Windows Credential Manager / Linux Secret Service), never in SQLite/JSON/logs/IPC responses (SEC-01, guide §10, §17). Private keys stay at their original paths (SEC-02).
 2. Key paths are stored as a reference to the original; the key is never copied (SEC-02).
 3. Any string coming from the server (stderr, breadcrumb, metrics, man/--help) is untrusted input: parsed as data, never executed, masked for secrets before being saved/logged.
 4. The built-in databases' versions (`errors.core.json`, `commands.core.json`) are checked against the app version; their update strategy is OQ-06.

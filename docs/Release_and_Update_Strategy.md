@@ -1,8 +1,8 @@
-# LucidSSH for Windows: Build, Release, and Update Strategy (public version)
+# LucidSSH: Build, Release, and Update Strategy (public version)
 
 | Field | Value |
 |---|---|
-| Platform | Windows 10/11 x64 |
+| Platform | Windows 10/11 x64; Linux x64 (AppImage and .deb starting with 1.1) |
 | Stack | Electron, TypeScript, electron-builder, electron-updater |
 | Distribution channel | GitHub Releases |
 
@@ -24,14 +24,14 @@ This document defines:
 
 LucidSSH follows this scheme:
 
-1. Primary distribution format — an NSIS `.exe` installer.
-2. Secondary format — a portable exe requiring no installation (a single file with the profile data next to the exe; NFR-05).
+1. Primary Windows format — an NSIS `.exe` installer.
+2. Additional Windows format — a portable exe requiring no installation (a single file with the profile data next to the exe; NFR-05). Linux x64 formats — AppImage and .deb.
 3. The build runs through `electron-builder`.
-4. The installed version auto-updates via `electron-updater`.
+4. NSIS and AppImage support auto-update via `electron-updater`, with user consent for downloading and installing. Portable and .deb are updated manually from Releases.
 5. Version files are hosted on GitHub Releases.
-6. At this stage, the developer builds, verifies, and publishes releases manually from their Windows machine.
-7. The build may later move to GitHub Actions, but publishing a stable release must always require manual confirmation.
-8. Every public stable update must be signed by a single trusted publisher — **N/A for 1.0, unsigned release (see §9)**, a principle for the future.
+6. The developer manually prepares a release from one source commit and version: Windows packages on Windows, Linux packages in a Linux environment.
+7. CI checks builds; publishing a stable release remains a separate manual action. The current Linux job runs only for PRs and does not retain artifacts, so it is not a push-build source of release files.
+8. A future signed Windows release must have a trusted publisher — **N/A for 1.0 and 1.1, releases without a certificate (see §9)**.
 9. Previous stable versions are kept on GitHub Releases and never removed without a specific reason.
 
 ## 3. App formats
@@ -41,7 +41,7 @@ LucidSSH follows this scheme:
 File name:
 
 ```text
-LucidSSH-Setup-1.0.0-x64.exe
+LucidSSH-Setup-1.1.0-x64.exe
 ```
 
 The installer must:
@@ -59,7 +59,7 @@ The installer must:
 File name:
 
 ```text
-LucidSSH-Portable-1.0.0-x64.exe
+LucidSSH-Portable-1.1.0-x64.exe
 ```
 
 The portable version:
@@ -71,32 +71,46 @@ The portable version:
 - is not the primary option for a beginner;
 - must never automatically replace its own executable files: the app never invokes auto-update in the portable build and shows a manual-only state with a link to GitHub Releases.
 
-Auto-update is only supported for the installed NSIS version. `latest.yml` is produced only for the NSIS Setup and its blockmap — the portable exe never appears in the update metadata, and `latest.yml` is never edited by hand.
+On Windows, auto-update is supported only for the installed NSIS version. `latest.yml` is produced only for the NSIS Setup and its blockmap — the portable exe never appears in update metadata, and `latest.yml` is never edited by hand.
+
+### 3.3 Linux: AppImage and .deb
+
+- `LucidSSH-1.1.0-x86_64.AppImage` — run after `chmod +x`; supports auto-update through `latest-linux.yml` with user consent.
+- `LucidSSH-1.1.0-amd64.deb` — install with `sudo apt install ./LucidSSH-1.1.0-amd64.deb`, recommended for Ubuntu/Debian. Update manually with a new package; the app never checks, downloads, or installs updates through electron-updater for this format.
+- The profile lives in Electron's system `userData` directory (usually `~/.config/LucidSSH`), passwords in Secret Service via keytar. An unavailable store never permits saving secrets to files.
+- The main live verification used Ubuntu 24.04; Ubuntu 22.04/Debian 12 have not been tested. Actual AppImage update installation remains unverified until the first real release with Linux artifacts.
+- Electron's sandbox stays enabled. The .deb installer prepares `chrome-sandbox`; the app never adds `--no-sandbox`. FUSE requirements and an optional AppArmor workaround for AppImage are documented in the README.
 
 ## 4. GitHub Release contents
 
 Every stable version gets its own Git tag and its own GitHub Release.
 
-Example release `v1.0.1`:
+Expected `v1.1.0` contents (an example, not a publication announcement):
 
 ```text
-v1.0.1
-├── LucidSSH-Setup-1.0.1-x64.exe
-├── LucidSSH-Setup-1.0.1-x64.exe.blockmap
-├── LucidSSH-Portable-1.0.1-x64.exe
-└── latest.yml
+v1.1.0
+├── LucidSSH-Setup-1.1.0-x64.exe
+├── LucidSSH-Setup-1.1.0-x64.exe.blockmap
+├── LucidSSH-Portable-1.1.0-x64.exe
+├── latest.yml
+├── LucidSSH-1.1.0-x86_64.AppImage
+├── LucidSSH-1.1.0-amd64.deb
+└── latest-linux.yml
 ```
 
 File purposes:
 
 | File | Purpose |
 |---|---|
-| `LucidSSH-Setup-1.0.1-x64.exe` | Installs the app and installs the update |
+| `LucidSSH-Setup-1.1.0-x64.exe` | Installs the app and installs the update |
 | `.exe.blockmap` | Differential update downloads, where supported for a given build |
-| `LucidSSH-Portable-1.0.1-x64.exe` | Manual, install-free use, profile next to the exe (NFR-05) |
-| `latest.yml` | Latest-version metadata for `electron-updater` |
+| `LucidSSH-Portable-1.1.0-x64.exe` | Manual, install-free use, profile next to the exe (NFR-05) |
+| `latest.yml` | NSIS metadata for `electron-updater`, including `sha512` |
+| `LucidSSH-1.1.0-x86_64.AppImage` | Linux x64, run without installation, auto-update support |
+| `LucidSSH-1.1.0-amd64.deb` | Linux x64, manual installation and updates |
+| `latest-linux.yml` | AppImage metadata for `electron-updater`, including `sha512` |
 
-The installer, `.exe.blockmap`, and `latest.yml` must all come from the same build. Manually editing `latest.yml` or mixing files from different builds is forbidden. `latest.yml` is produced by electron-builder for the NSIS Setup and its blockmap only — before publishing, its contents are checked separately (NSIS artifacts of one version only).
+All artifacts have one source commit and version; each platform's files come from one build of that platform. Mixing builds or manually editing `latest.yml`/`latest-linux.yml` is forbidden. Before publishing, verify versions, names, sizes, and the actual files' `sha512`: `latest.yml` refers only to NSIS, never portable; `latest-linux.yml` must contain a valid AppImage entry and may also contain .deb entries in `files`, as generated by electron-builder. The AppImage updater selects AppImage and excludes .deb; the .deb build remains manual-only. Include any additional update files produced by that same build if the metadata references them.
 
 ## 5. Version numbering
 
@@ -126,44 +140,48 @@ At this stage, releases are created manually.
 
 1. Bump the version number in `package.json`.
 2. Update the release notes — there are two, prepared in the same version-bump commit, before the build:
-   - the GitHub Release description (markdown, with the SHA-256 of both Windows artifacts — the NSIS Setup and the portable exe — and a note about the SmartScreen warning) — shown on the release page only;
+   - the GitHub Release description (markdown, with space for the SHA-256 of all four packages — NSIS Setup, portable exe, AppImage, .deb — and a Windows SmartScreen note); fill in the actual hashes after building; shown on the release page only;
    - `build/release-notes.md` (plain text, `## RU`/`## EN` sections) — picked up by `electron-builder` into `latest.yml`'s `releaseNotes` field and shown in the app's Settings → About card by the installed previous version.
 3. Run tests and a production build.
-4. Build the NSIS installer and the portable exe via `electron-builder --publish never` (publishing is a separate manual step — see §6.2). Both artifacts come from one source state, one version, x64 only, with no new dependencies.
-5. Check the generated `latest.yml`: it points only to the NSIS Setup and the matching blockmap of the same version; the portable exe is absent from the metadata; no manual editing is used.
+4. Build the same prepared commit on Windows with `npm run dist -- --win --publish never` (NSIS and portable), and in Linux with `npm run dist -- --linux --publish never` (AppImage and .deb). Build resources live in `build/`; `build/release-notes.md` is included in both platforms' metadata. These commands never publish. Ensure the final commit's Linux files are available before release; PR-CI without artifact retention does not replace this step.
+5. Check the generated `latest.yml` and `latest-linux.yml`: the version matches; file names, sizes, and SHA-512 match one build of the relevant platform; portable is absent from `latest.yml`. Verify a valid AppImage entry and its selection by the AppImage updater; .deb entries in `latest-linux.yml` are allowed and must not be removed manually. Compute SHA-256 for the four user-facing packages and add the actual hashes to the prepared release description.
 6. Sign the executables with a code-signing certificate — **N/A, unsigned release (see §9)**.
 7. Verify the digital signature and timestamp — **N/A, unsigned release (see §9)**.
 8. Install the new version on a clean test system.
 9. Verify updating from the previous stable version.
 10. Verify that hosts, history, settings, and private-key references survive.
-11. Create a Git tag like `v1.0.1`.
-12. Create a GitHub Release with the same version number.
-13. Upload every file produced by that one build (NSIS Setup, blockmap, portable exe, `latest.yml`).
-14. Publish the release as a draft first and do a final review.
+11. Create a Git tag like `v1.1.0` on the source commit of the verified builds.
+12. Create a draft GitHub Release with the same version number.
+13. Upload all files for both platforms listed in §4.
+14. Verify the draft's completeness, hashes, and release notes. No automatic publishing.
 15. Publish the stable release.
-16. Verify that the installed previous version detects the update.
+16. Verify update detection by the installed previous NSIS version and actual AppImage update installation using a previously prepared build. The latter remains deferred until the first real Linux release; do not report it as passed beforehand.
+
+Commit, push, merge, tag creation, and publication require separate explicit developer commands. The version bump stays a separate commit; final SHA-256 hashes are added only after building. Before native-module tests, run `npm run rebuild:test`; restore the Electron ABI afterward with `npm run rebuild:app` (AGENTS.md §9).
 
 ### 6.2 Forbidden actions
 
 - Never upload the certificate's private key or its password to GitHub.
 - Never put a GitHub Personal Access Token in the app's code, `package.json`, or the installer.
 - Never replace a published installer with a different file under the same version number.
-- Never publish `latest.yml` before the corresponding installer has been uploaded.
+- Never publish `latest.yml`/`latest-linux.yml` before the matching packages; publish the draft only after the complete set for both platforms is uploaded.
 - Never publish an unverified build directly as stable.
 
 ## 7. How auto-update works
 
 ### 7.1 Checking for a new version
 
-The installed LucidSSH:
+The NSIS build and AppImage:
 
-1. checks for an update after the app launches;
-2. lets the user trigger a manual check via "Check for updates";
-3. only requests the GitHub Releases data needed for the update;
-4. never sends command history, the host list, server addresses, terminal contents, or any other user data;
-5. keeps working normally with no internet, without an error message on every launch.
+1. check for an update after launch if automatic checks are enabled;
+2. let the user trigger a manual check via "Check for updates";
+3. only request the GitHub Releases data needed for the update;
+4. never send command history, the host list, server addresses, terminal contents, or any other user data;
+5. keep working normally with no internet, without an error message on every launch.
 
 The check must never delay opening the interface or connecting over SSH.
+
+Portable and .deb show a manual-only state linking to Releases: they never invoke electron-updater to check, download, or install. Opening the link is an explicit user action in the system browser.
 
 ### 7.2 User flow
 
@@ -184,11 +202,11 @@ An update must never force-close an active SSH session. Before restarting, the a
 
 ### 7.3 Update channels
 
-Version 1.0 uses only the stable channel.
+Versions 1.0 and 1.1 use only the stable channel.
 
 - Draft releases are never offered to users.
 - Prerelease versions are never offered to stable-channel users.
-- Alpha and beta channels are out of scope for version 1.0.
+- Alpha and beta channels are out of scope for versions 1.0 and 1.1.
 
 ## 8. Update security
 
@@ -197,7 +215,7 @@ Version 1.0 uses only the stable channel.
 Before installing an update, the app must:
 
 - fetch release metadata over HTTPS;
-- download the update package and its SHA-256 checksum from the GitHub Release;
+- download the package and use `sha512` from the generated `latest.yml` (NSIS) / `latest-linux.yml` (AppImage);
 - verify the downloaded file's integrity by comparing its hash against the published checksum;
 - reject a package that's corrupted or whose checksum doesn't match;
 - log a technical update error without saving secrets or SSH session contents.
@@ -206,9 +224,9 @@ Checksum verification must run in the main process. The renderer gets no direct 
 
 ### 8.2 Publisher consistency
 
-**Not applicable to version 1.0.** The release ships with no certificate (§9). The principle for the future follows.
+**Not applicable to versions 1.0 and 1.1.** Releases ship with no certificate (§9). The principle for a future signed Windows release follows.
 
-The publisher name and certificate must be chosen before the first stable public release. Changing the publisher name or certificate must be planned separately, since it can break update verification for already-installed versions.
+The publisher name and certificate must be chosen before the first signed stable Windows release. Changing the publisher name or certificate must be planned separately, since it can break update verification for already-installed versions.
 
 Every signature must carry a trusted timestamp. Thanks to the timestamp, a previously released version stays validly signed even after the certificate expires.
 
@@ -220,20 +238,22 @@ The app must never contain a token for accessing a private GitHub repository —
 
 ## 9. Package signing and integrity
 
-### 9.1 Decision for version 1.0: no Code Signing Certificate
+### 9.1 Decision for versions 1.0 and 1.1: no Code Signing Certificate
 
-As things stand, the decision is: LucidSSH 1.0 ships **without a trusted Code Signing Certificate signature**.
+LucidSSH 1.0 and 1.1 ship **without a trusted Code Signing Certificate signature**. Returning to signing is a separate future decision with no assigned version.
 
-**What replaces signing in 1.0:**
+**Measures for an unsigned release (not equivalent to signing):**
 
-1. Every release ships with a **published SHA-256 checksum** for each Windows artifact (the NSIS Setup and the portable exe) in the GitHub Release description and on the download page.
+1. Every release ships with a **published SHA-256 checksum** for each user-facing package (NSIS Setup, portable exe, AppImage, .deb) in the GitHub Release description and on the download page.
 2. **On first download** (the GitHub Release description), the user gets an explanation of what the Windows "Unknown publisher" warning means and how to verify the file via the checksum — this is the only point where the explanation is useful, since SmartScreen fires BEFORE launch, not after. The app's first-launch window doesn't explain anything specifically — instead, Settings → About has a calm informational line about why there's no digital signature, with a link to the checksum, for anyone who checks after the fact.
-3. Before a stable publish, every release is submitted to **Microsoft Security Intelligence** for review (submit.microsoft.com, best-effort scanning, no guarantees).
+3. Before a stable publish, Windows packages are submitted to **Microsoft Security Intelligence** for review (submit.microsoft.com, best-effort scanning, no guarantees).
 4. Once a signed version exists, this explanation will be updated.
 
 ### 9.2 Integrity-verification mechanism
 
-On update, the app compares the downloaded package's SHA-256 hash against the checksum published in the GitHub Release's `latest.yml`. A corrupted package is rejected and not installed.
+For auto-update, electron-updater in the main process verifies the package's **SHA-512** against `sha512` in `latest.yml` (NSIS) / `latest-linux.yml` (AppImage). A corrupted package is rejected and not installed. The **SHA-256** in the release description is for manual verification of a downloaded file; the app does not parse it from that text.
+
+HTTPS protects transmission; a checksum verifies file integrity. Neither SHA-256 nor SHA-512 from the same GitHub Release authenticates the publisher if the release itself is replaced. This is a residual risk of shipping without a trusted signature, not a promise of complete protection.
 
 ### 9.3 Microsoft SmartScreen and reputation
 
@@ -247,7 +267,7 @@ Once the distribution model is settled, returning to signing the stable installe
 
 ## 10. SmartScreen
 
-**The requirement wording below applies to signed future versions.** For 1.0, NFR-06 applies: the installer is unsigned, see §9.
+**The requirement wording below applies to a future signed Windows release.** For 1.0 and 1.1, NFR-06 applies: the installer is unsigned, see §9.
 
 A digital signature confirms the publisher and file integrity, but on its own it doesn't guarantee the absence of a Microsoft Defender SmartScreen warning.
 
@@ -298,7 +318,7 @@ An update or a reinstall over an existing version must never delete:
 - `known_hosts`;
 - app settings;
 - references to the original private-key files;
-- LucidSSH's entries in Windows Credential Manager.
+- LucidSSH's entries in the system Secret Store (Windows Credential Manager / Secret Service).
 
 Private keys are never copied into the app package or the update directory. Passwords and passphrases play no role in verifying or installing an update.
 
@@ -320,7 +340,7 @@ Settings must show a link to the update source. The manual-check button must cle
 | GitHub unreachable | Retry later or manually |
 | Not enough disk space | The download stops, a clear message is shown |
 | Corrupted file | The file is deleted, the install never starts |
-| Invalid signature (N/A for 1.0, unsigned release) | The update is blocked as potentially unsafe |
+| Invalid signature (future signed Windows release; N/A for 1.0 and 1.1) | The update is blocked as potentially unsafe |
 | An SSH session is active | Restart only happens after user confirmation |
 | Install failed | The current version stays functional, retry instructions are shown |
 
@@ -330,7 +350,7 @@ Every message shown to the user must be localized. The technical update log must
 
 ### UPD-01. Update check
 
-The app checks GitHub Releases on launch and on manual request, without blocking the interface or SSH connections.
+NSIS and AppImage check GitHub Releases on launch (if automatic checks are enabled) and on manual request, without blocking the interface or SSH connections. Portable and .deb show a manual-only state linking to Releases.
 
 **Acceptance criteria:** when a new stable version exists, its number and changelog are shown; with no internet, the app keeps working.
 
@@ -342,7 +362,7 @@ Downloading and restarting only happen after a clear user action.
 
 ### UPD-03. Integrity verification
 
-Before installing, package integrity is verified by comparing SHA-256 against the checksum published in the GitHub Release.
+Before automatic installation, electron-updater verifies SHA-512 against `sha512` in the platform's metadata. SHA-256 in the release description is for manual verification.
 
 **Acceptance criteria:** a corrupted package, or one whose checksum doesn't match, is rejected and not installed.
 
@@ -350,13 +370,13 @@ Before installing, package integrity is verified by comparing SHA-256 against th
 
 An update never deletes user data or secrets.
 
-**Acceptance criteria:** after updating from a previous stable version, prior hosts, history, settings, and Credential Manager entries are still available.
+**Acceptance criteria:** after updating from a previous stable version, prior hosts, history, settings, and system Secret Store entries are still available.
 
 ### UPD-05. Release publishing
 
-Every version has a unique number, a Git tag, and a GitHub Release. All update files come from the same build.
+Every version has a unique number, a Git tag, and a GitHub Release. Packages have one source commit and version; each platform's files come from one build of that platform. Upload both platforms' artifacts, including `latest.yml` and `latest-linux.yml`, before publishing.
 
-**Acceptance criteria:** an installed previous version detects the published release and updates successfully.
+**Acceptance criteria:** a previous auto-update-capable build detects the published release and updates successfully. Actual AppImage update installation remains deferred until the first real Linux release (§3.3).
 
 ### UPD-06. Previous versions
 
@@ -364,42 +384,42 @@ Previous stable versions are kept on GitHub Releases.
 
 **Acceptance criteria:** the user can manually download a previous installer, unless the release was pulled for security reasons.
 
-### SIGN-01. Stable-version signing (N/A for v1.0)
+### SIGN-01. Stable-version signing (N/A for 1.0 and 1.1)
 
-**Not applicable to version 1.0.** The release ships without a Code Signing Certificate.
+**Not applicable to versions 1.0 and 1.1.** Releases ship without a Code Signing Certificate.
 
 **Principle for the future:** the stable installer and update package are signed with a trusted, timestamped Code Signing Certificate.
 
 **Acceptance criteria (once applicable):** Windows file properties show a valid signature and the expected publisher.
 
-### SIGN-02. Signing-key protection (N/A for v1.0)
+### SIGN-02. Signing-key protection
 
-**Not applicable to version 1.0.** The release ships with no certificate.
-
-**Principle for the future:** the certificate's private key is never stored in the repository or the source code.
+**Versions 1.0 and 1.1 have no certificate.** Keeping the private key out of the repository is required regardless of version.
 
 **Acceptance criteria (once applicable):** auditing the repository and release files finds no certificate with a private key, password, or access token.
 
-## 17. Version 1.0 end-to-end flow
+## 17. Version 1.1 end-to-end flow
 
 ```text
 Developer
     → bumps the version number
-    → builds LucidSSH locally
+    → builds Windows/Linux from one source commit and version
     → computes the SHA-256 checksum of the files
-    → submits the release to Microsoft Security Intelligence for scanning
+    → submits Windows packages to Microsoft Security Intelligence for scanning
     → verifies a clean install and an update
     → creates a Git tag and a draft release
-    → uploads the EXE, blockmap, portable exe, and latest.yml
+    → uploads Setup, blockmap, portable exe, AppImage, .deb, and both metadata files
     → adds the SHA-256 to the Release description
     → publishes the stable GitHub Release
 
 The user's LucidSSH
-    → checks latest.yml over HTTPS
+    → NSIS/AppImage: checks its platform's metadata over HTTPS
     → reports the new version
     → downloads the update with the user's consent
-    → verifies integrity by comparing SHA-256
+    → verifies SHA-512 against metadata
     → offers a safe restart
     → installs the version over the current one
     → preserves user data
+
+Portable and .deb: the user opens Releases and updates manually.
 ```

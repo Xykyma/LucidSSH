@@ -2,57 +2,58 @@
 status: accepted
 ---
 
-# Переносимый профиль и секрет адресуются долгоживущими идентичностями, а не вариантом сборки, путем или числовым id
+# Portable profiles and secrets use durable identities, not build type, path, or numeric ID
 
-Решение (сессии гриллинга и реализации `.scratch/windows-portable/`, тикеты 01–05,
-2026-11): у portable-профиля две долгоживущие идентичности — `profile.id` (UUID v4,
-отдельный файл в папке профиля) и `credentialId` (UUID v4, колонка `hosts.credential_id`).
-Секреты portable-хостов адресуются парой `LucidSSH/{profileId}/{credentialId}`;
-установленная версия и другие платформы сохраняют прежний адрес `LucidSSH/{hostId}`.
+Decision (November 2026): a portable profile has two durable identities —
+`profile.id` (a UUID v4 in a separate file in the profile folder) and `credentialId`
+(a UUID v4 in `hosts.credential_id`). Portable-host secrets are addressed as
+`LucidSSH/{profileId}/{credentialId}`. Installed builds and other platforms keep
+the legacy `LucidSSH/{hostId}` address.
 
-**Почему это решение, а не очевидность.** Переносимость ломается о три неявных
-предположения старой схемы:
+**Why this is a decision, not an obvious default.** Portability exposes three
+implicit assumptions in the old scheme:
 
-1. **Числовой id SQLite считался идентичностью хоста.** Он переживает копирование
-   `hosts.db`, поэтому две независимые копии профиля адресовались к одной записи
-   Credential Manager, а хост установленной версии с тем же id — к чужой. Для
-   «переноси папку — сохрани доступ» это удобно случайно, а не по правилу.
-2. **Режим определялся вариантом сборки/путем.** Адрес секрета по пути exe нестабилен
-   (папку переименовывают, диску меняют букву), а признак «portable-сборка» не
-   существует вне запущенного процесса.
-3. **Профиль без идентичности.** При повреждении/потере конфигурации молчаливая
-   регенерация сделала бы все сохранённые секреты недостижимыми — незаметно для
-   пользователя.
+1. **A numeric SQLite ID was treated as host identity.** Copying `hosts.db`
+   preserves it, so unrelated profiles and the installed build could address
+   the same Credential Manager entry. Keeping access when a folder is copied
+   should be an explicit rule, not a side effect of coinciding row IDs.
+2. **Build type or path was treated as identity.** A secret address based on
+   the exe path changes when a folder is renamed or a drive letter changes.
+   The fact that the running artifact is portable does not identify its profile.
+3. **The profile had no independent identity.** Silently regenerating it after
+   configuration loss or corruption would make saved secrets unreachable.
 
-**Отклонённые альтернативы адресации секрета:**
+**Rejected secret-addressing alternatives:**
 
-- **Только числовой `hostId`** — отклонено: изоляция независимых копий и профилей
-  невозможна (см. выше). Сохранён для установленной версии — миграция записей
-  Хранилища не требуется, что важнее единообразия.
-- **Путь к папке профиля в адресе** — отклонено. Путь меняется при переносе, смене
-  буквы диска и переименовании — каждый такой шаг терял бы секреты.
-- **Признак варианта сборки в адресе** — отклонено. «portable» не переживает копирование
-  папки как смысл: две копии одного профиля — это один профиль, а не «portable №2».
-- **Один `credentialId` без `profile.id`** — отклонено. UUID хоста всё ещё коллидирует
-  между независимыми профилями (случайные UUID теоретически; импорт/копирование — на
-  практике). `profile.id` даёт изоляцию профилей целиком; `credentialId` — хостов
-  внутри профиля. Смена SSH-назначения создаёт новый `credentialId`: изменённый хост
-  не получает прежний секрет, а общий секрет копий не трогается.
+- **Only numeric `hostId`** — cannot isolate independent portable profiles.
+  Retained for installed builds: avoiding a migration of existing Secret Store
+  entries matters more than making every build use the same address shape.
+- **Profile-folder path** — moving or renaming the folder, or changing a drive
+  letter, would lose access to secrets.
+- **Build-type flag** — two copies of one profile are still the same profile,
+  not separate identities merely because each is launched as portable.
+- **Only `credentialId`, without `profile.id`** — rejected in favor of an explicit
+  profile namespace and a separate host credential identity. Copying a database
+  preserves its IDs intentionally; independent profiles must have their own
+  profile identities. Changing an SSH destination mints a new `credentialId`,
+  detaching that host without modifying the secret shared by other copies.
 
-**Почему `profile.id` — отдельный файл, а не конфигурация.** Идентичность читается до
-открытия БД и миграций и до конфигурации: повреждённый `config.json` не должен менять,
-какие секреты доступны. Потерянный рядом с артефактами данных профиля (или невалидный)
-блокирует запуск без регенерации — регенерация вместо ошибки означала бы молчаливую
-потерю адресации. Новый профиль признаётся только при отсутствии и `profile.id`, и всех
-известных артефактов — сам exe и посторонние файлы папку профилем не делают.
+**Why `profile.id` is a separate file, not configuration.** Identity is read before
+the configuration, database opening, and migrations: a corrupted `config.json`
+must not change which secrets are addressed. A missing identity next to existing
+profile data, or an invalid identity, blocks startup without regeneration.
+Regeneration would silently lose the address. A profile is new only when both
+`profile.id` and all known data artifacts are absent; the exe and unrelated files
+alone do not make the folder an existing profile.
 
-**Границы решения:**
+**Boundaries:**
 
-- Системный профиль установленной версии и dev-режим `profile.id`/`credentialId` не
-  получают — иначе обновление 1.0 → 1.1 потеряло бы связь с записями
-  `LucidSSH/{hostId}`.
-- Секреты между машинами всё равно не переносятся: DPAPI привязан к пользователю/машине.
-  Это архитектурное ограничение, а не недоделка; пользователь предупреждается один раз
-  при первом запуске нового профиля.
-- `profile.id` и `credentialId` не секреты и при этом нигде не раскрываются: не в
-  renderer-модели, не в `AppInfo`, не в экспорте/импорте, не в журналах.
+- Installed profiles, Linux, and dev mode do not get a `profile.id`. Host records
+  do get `credentialId` through migration/creation on every platform, but installed
+  and Linux secret addressing still uses `LucidSSH/{hostId}`. Adding the column
+  does not migrate or invalidate existing Secret Store entries.
+- On Windows, secrets do not travel between machines with the folder: DPAPI is
+  bound to the user/machine. This is an architectural limit, explained once on
+  first launch of a new portable profile.
+- `profile.id` and `credentialId` are not secrets, but remain main-only: not in the
+  renderer host model, `AppInfo`, host export/import, or logs.

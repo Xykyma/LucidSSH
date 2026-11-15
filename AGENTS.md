@@ -1,6 +1,6 @@
 # AGENTS.md — operating rules
 
-This file contains the mandatory rules for working on **LucidSSH for Windows**. Read before every task. On conflict: the spec (`private/TZ.md`) and the implemented UI in `src/renderer/components/` take priority over this file; this file takes priority over general habits.
+This file contains the mandatory rules for working on **LucidSSH**. Read before every task. On conflict: the spec (`private/TZ.md`) and the implemented UI in `src/renderer/src/components/` take priority over this file; this file takes priority over general habits.
 
 > **Public/private repository.** Part of the documentation lives in `private/` — not published, contains unimplemented requirements, roadmap, and internal decision context. `docs/` is the public showcase (README, implemented ✅ requirements, security architecture, data schemas) — published in **English**, since the repository audience isn't limited to Russian speakers; `private/` stays in **Russian**, it's the working source for the developer and the AI agents, not meant for outside readers. For internal work (including resolving open questions, planning features beyond 1.0) always use the full versions in `private/`, not the public ones in `docs/`. Split details — `docs/agent/domain.md` or ask the developer.
 
@@ -8,7 +8,7 @@ This file contains the mandatory rules for working on **LucidSSH for Windows**. 
 
 ## 0. Project overview
 
-A desktop SSH client for Windows built on Electron + TypeScript. Target audience: beginners, without getting in the way of experienced users. Fully local: **no account, no cloud, no telemetry**.
+A desktop SSH client for Windows and Linux built on Electron + TypeScript. Target audience: beginners, without getting in the way of experienced users. Fully local: **no account, no cloud, no telemetry**.
 
 Four features set the product apart (must not be simplified without explicit agreement):
 - **Dangerous command guard** — intercepts `rm -rf` and similar before they reach the server.
@@ -21,7 +21,7 @@ Four features set the product apart (must not be simplified without explicit agr
 ## 1. Sources of truth (in priority order)
 
 1. **`private/TZ.md`** — requirements, IDs, acceptance criteria (full version, including unimplemented requirements and open questions). If a rule here conflicts with the spec, the spec wins. The public showcase (✅ requirements only) is `docs/TZ.md`, not a source of truth for internal work.
-2. **Implemented code in `src/renderer/components/`** — **source of truth for the UI**. `doc/screenshots/` has been removed (moved into git history); an archived design mockup lives at `private/backup/2026-07-05_v1.1/*.dc.html` and is useful as a reference for intent, but not as ground truth. Before laying out or changing any screen, open the corresponding component and check how it's already implemented: placement, states, colors, text. Don't invent a layout that exists neither in the code nor in `Design_Brief.md`. If a screen's behavior is unclear and undocumented — **stop and ask**, don't guess.
+2. **Implemented code in `src/renderer/src/components/`** — **source of truth for the UI**. `doc/screenshots/` has been removed (moved into git history); an archived design mockup lives at `private/backup/2026-07-05_v1.1/*.dc.html` and is useful as a reference for intent, but not as ground truth. Before laying out or changing any screen, open the corresponding component and check how it's already implemented: placement, states, colors, text. Don't invent a layout that exists neither in the code nor in `Design_Brief.md`. If a screen's behavior is unclear and undocumented — **stop and ask**, don't guess.
 3. **`private/Design_Brief.md`** — design intent, tokens, behavior.
 4. **`package.json`** — the single source of truth for the version number.
 5. This file — operating rules.
@@ -35,7 +35,7 @@ Where to look for what before working on a module. For internal work, each agent
 | Document | Path | When it must be opened |
 |---|---|---|
 | `TZ.md` | `private/TZ.md` (full, Russian), `docs/TZ.md` (public, ✅ only, English) | Any task: requirements, IDs, acceptance criteria. Highest priority. Work from `private/TZ.md`. |
-| `src/renderer/components/` | — | Any UI work — source of truth for screens (screenshots/ removed, see §1). |
+| `src/renderer/src/components/` | — | Any UI work — source of truth for screens (screenshots/ removed, see §1). |
 | `Design_Brief.md` | `private/Design_Brief.md` (Russian) | Layout, tokens, component behavior. |
 | `Data_Structures.md` | `private/Data_Structures.md` (full, Russian), `docs/Data_Structures.md` (public, English) | **`hosts/`, `history/`, `errors/`** — SQLite schemas, content-database formats (`errors.core.json`, `commands.core.json`, translations in `locales/`), LLM extension points. Don't write a table schema or JSON parser without checking first. |
 | `Security_Guide.md` | `private/Security_Guide.md` (full, Russian), `docs/Security_Guide.md` (public, English) | Any code touching section 4 (keytar, keys, IPC, fingerprint, masking). Rationale for security requirements. |
@@ -53,7 +53,7 @@ Electron 30+ / Node 20+ · TypeScript (strict) · React + Tailwind · xterm.js �
 
 - Strict TypeScript: no `any` without an explicit reason in a comment, no `// @ts-ignore` without an explanation.
 - Don't add dependencies without asking. Especially ones that duplicate what's already in the stack.
-- Target platform is Windows 10/11 x64 only. No cross-platform code needed.
+- Target platforms: Windows 10/11 x64 (primary; NSIS and portable exe), Linux x64 (AppImage and .deb, starting with 1.1). Platform-specific behavior stays at the existing seams; no other platforms or package formats without agreement.
 
 ---
 
@@ -63,7 +63,7 @@ Follow the existing tree. New code goes where it belongs, not into the root of `
 
 ```
 src/main/      ssh/ guard/ errors/ hosts/ history/ dashboard/ keychain/ i18n/
-src/renderer/  components/{Terminal,HostManager,Breadcrumb,Dashboard,
+src/renderer/src/  components/{Terminal,HostManager,Breadcrumb,Dashboard,
                CommandCatalog,History,Guard,ErrorPanel}  stores/  i18n/
 assets/        locales/{ru,en}/*.json   errors.core.json   commands.core.json
 ```
@@ -76,7 +76,7 @@ assets/        locales/{ru,en}/*.json   errors.core.json   commands.core.json
 
 ## 4. Security — non-negotiable
 
-- Passwords — **only** through keytar → Windows Credential Manager. Never in files, SQLite, logs, or history.
+- Passwords — **only** through keytar → the system Secret Store (Windows Credential Manager on Windows, Secret Service on Linux). Never in files, SQLite, logs, or history; an unavailable store does not permit a file-based fallback.
 - Private keys — used from their original path, **never copied** into the app directory.
 - Electron: `contextIsolation: true`, `nodeIntegration: false`. IPC — only through `contextBridge`, no direct Node access from the renderer.
 - Verify the server fingerprint on **every** connection, store it in `known_hosts`.
@@ -95,7 +95,7 @@ Any change that weakens the above — stop and get agreement first.
 - An experienced user can disable it globally or per host.
 
 **Error detector**
-- Offline only, driven by `assets/errors.core.json` + the active translation. **No LLM** in 1.0.
+- Offline only, driven by `assets/errors.core.json` + the active translation. **No LLM** in 1.0 or 1.1.
 - Trigger: exit code ≠ 0 or non-empty stderr.
 - The panel slides up from the bottom, **never covers** the input line. Closes via Esc or ×.
 
@@ -130,9 +130,9 @@ The architecture is designed for **N languages**. 1.0 ships with **ru + en**; ad
 
 ---
 
-## 6. What's NOT in version 1.0
+## 6. Release scope and permanent boundaries
 
-For the list of features outside the current release, see `private/Development_Roadmap.md` §3 (not published here).
+For the current release scope and deferred features, see `private/TZ.md` §2.3/§10 and `private/Development_Roadmap.md` §3.19 (not published here).
 
 A permanent architectural constraint, not a version deferral (decision closed for good, not a backlog item): **a local PowerShell/CMD/WSL terminal is not being added** — the product stays an SSH client, not a general-purpose terminal emulator; the guard/detector/breadcrumb/dashboard are hard-wired to the remote SSH exec channel and can't be ported to a local process without duplicating the whole architecture. Rationale — `docs/agent/adr/0002-no-local-shell.md`.
 
@@ -168,7 +168,7 @@ Of the three ADRs recorded from that session, only `docs/agent/adr/0002-no-local
 
 **Pull requests** — title and body **in English** (same public-audience rationale; решение от 2026-11-11). Внутренние материалы (issue-файлы `.scratch/`, `private/`, отчёты агентам) остаются на русском.
 
-**Release blocker:** BLK-01 — code signing certificate (closed: decision — ship without a signature, SHA-256 instead, see `docs/TZ.md` NFR-06 — public). Full rationale — `private/TZ.md` §11.1 and `private/Release_and_Update_Strategy.md` §9 (not published).
+**Release blocker:** BLK-01 — code signing certificate (closed: 1.0 and 1.1 ship unsigned, see `docs/TZ.md` NFR-06 — public). SHA-256 is published for manual artifact checks; electron-updater verifies SHA-512 from update metadata. Neither checksum authenticates a replaced release. Full rationale — `private/TZ.md` §11.1 and `private/Release_and_Update_Strategy.md` §9 (not published).
 
 ---
 
@@ -207,7 +207,7 @@ Of the three ADRs recorded from that session, only `docs/agent/adr/0002-no-local
 
 ## 11. Development rules and workflow
 
-- Before a task: read the relevant spec section and check the screen against the implemented component in `src/renderer/components/`.
+- Before a task: read the relevant spec section and check the screen against the implemented component in `src/renderer/src/components/`.
 - Big changes — plan first, then code.
 - Don't silently do things that weren't asked for (new dependencies, architecture changes, scope expansion).
 - When a trade-off is honestly explained, I'm inclined to accept scope expansion rather than defer the feature — so show alternatives along with their timeline consequences.

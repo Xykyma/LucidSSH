@@ -1,11 +1,11 @@
-# LucidSSH for Windows — Specification (public version)
+# LucidSSH — Specification (public version)
 
 | Field | Value |
 |---|---|
-| Product | LucidSSH for Windows |
-| Status | Draft — under review |
+| Product | LucidSSH |
+| Status | Documentation for 1.1.0 in preparation |
 | Stack | Electron + TypeScript |
-| Platform | Windows 10 / 11 (x64) |
+| Platform | Windows 10 / 11 (x64); Linux x64 (AppImage and .deb starting with 1.1) |
 | Account and cloud | Fully local, no account |
 
 > This is the public version of the specification — a showcase of implemented requirements for audit and feedback. The full version (change history, open questions, the 1.1+/1.2 roadmap, unimplemented requirements awaiting a scope decision) is kept in the project's internal documentation and is not published.
@@ -16,7 +16,7 @@
 
 ## 1.1 Purpose of this document
 
-This document defines the functional and non-functional requirements for LucidSSH for Windows — a desktop SSH client for Windows aimed at beginners, but usable by experienced users too. It's the basis for design, development, and acceptance testing.
+This document defines the functional and non-functional requirements for LucidSSH — a desktop SSH client for Windows and Linux aimed at beginners, but usable by experienced users too. It's the basis for design, development, and acceptance testing.
 
 ## 1.2 Product context
 
@@ -35,7 +35,7 @@ LucidSSH fills that gap: a full-featured SSH client with active protection again
 
 ---
 
-# 2. Version 1.0 scope
+# 2. Release scope
 
 ## 2.1 In scope for version 1.0
 
@@ -49,7 +49,7 @@ LucidSSH fills that gap: a full-featured SSH client with active protection again
 - Basic SSH key management (local)
 - PuTTY and ~/.ssh/config session import
 - Host export and import (JSON, no secrets)
-- Auto-update of the installed version (HTTPS, with SHA-256 integrity verification)
+- Auto-update of the installed version (HTTPS, SHA-512 verified against metadata; SHA-256 for manual checks)
 - Settings page with sections: Terminal, Connection, Security, Interface, Hotkeys
 - Notifications: Windows system toasts + an event icon in the header
 - First-run screen (onboarding)
@@ -57,6 +57,14 @@ LucidSSH fills that gap: a full-featured SSH client with active protection again
 - SSH-level connection log
 - Window size and position persistence
 - Fully local operation, no account
+
+## 2.2 Version 1.1.0 preparation
+
+The release adds Linux x64 packages (AppImage and .deb), Windows portable with its profile next to the exe (NFR-05), and fixes already implemented since 1.0.3. This document does not announce publication: available packages are listed in GitHub Releases.
+
+On Linux, the key wizard uses system `ssh-keygen`; passwords stay in Secret Service through keytar. Only `~/.ssh/config` is shown as an external import source. NSIS and AppImage support auto-update with user consent; portable and .deb are manual-only.
+
+Linux's main live verification used Ubuntu 24.04. Ubuntu 22.04/Debian 12 and actual AppImage update installation have not been verified; the latter is scheduled for the first real Linux release. Full Linux acceptance (NFR-08) is still pending, so it is not marked ✅ or included in the completed-requirements table below.
 
 ---
 
@@ -85,13 +93,13 @@ Priority markers: **Must** — required for the 1.0 release, **Should** — impo
 |---|---|---|---|---|
 | ✅ HM-01 | The user creates, edits, and deletes saved hosts. Each host has: name, address, port, username, auth method, group, and a note (optional text field, up to 200 characters, not part of the host name and doesn't affect dedup on import EXP-02). | Must | — | A host is created, appears in the list, and connects on click. If filled in, the note shows as a tooltip on hover in the manager tree and in the connection confirmation dialog. |
 | ✅ HM-02 | Hosts are organized into groups. Groups collapse and expand. | Must | HM-01 | Groups render as a tree; state persists across launches. |
-| ✅ HM-03 | Import sessions from the PuTTY registry (HKCU\Software\SimonTatham\PuTTY\Sessions). | Must | HM-01 | After import, all PuTTY sessions show up as hosts. |
+| ✅ HM-03 | On Windows, import sessions from the PuTTY registry (HKCU\Software\SimonTatham\PuTTY\Sessions). The source is hidden on Linux. | Must | HM-01 | After import on Windows, all PuTTY sessions show up as hosts; Linux does not show this import source. |
 | ✅ HM-04 | Import hosts from ~/.ssh/config (HostName, User, Port, IdentityFile, ProxyJump). ProxyCommand, LocalCommand, Match exec, KnownHostsCommand directives are **not executed** — shown as unsupported instead. | Must | HM-01 | All safe entries are imported; executable directives aren't run. |
 | ✅ HM-05 | Real-time search by host name, address, and group. | Should | HM-01 | Partial-match search returns correct results. |
-| ✅ HM-06 | Passwords and passphrases are stored in Windows Credential Manager. Private keys stay local and never leave the device. | Must | HM-01 | No password is stored in plaintext in any app file. |
-| ✅ HM-10 | Import sessions from WinSCP's configuration (`WinSCP.ini` or the `HKCU\Software\Martin Prikryl\WinSCP 2\Sessions` registry key). Address, port, username, and private-key path (if set) are imported. Passwords stored encrypted by WinSCP are not imported — the user is prompted to re-enter them. | Should | HM-01 | After import, WinSCP sessions show up as hosts; no attempt is made to decrypt a WinSCP password. |
+| ✅ HM-06 | Passwords and passphrases are stored through keytar only in the system Secret Store: Windows Credential Manager on Windows, Secret Service (gnome-keyring/KWallet) on Linux. An unavailable store never permits saving secrets to files; the user can work without a saved secret. Private keys stay local and never leave the device. | Must | HM-01 | No password is stored in plaintext in any app file; saving a new secret reports an error when the store is unavailable, without a file-based fallback. |
+| ✅ HM-10 | On Windows, import sessions from WinSCP's configuration (`WinSCP.ini` or the `HKCU\Software\Martin Prikryl\WinSCP 2\Sessions` registry key). The source is hidden on Linux. Address, port, username, and private-key path (if set) are imported. Passwords stored encrypted by WinSCP are not imported — the user is prompted to re-enter them. | Should | HM-01 | After import on Windows, WinSCP sessions show up as hosts; no attempt is made to decrypt a WinSCP password; Linux does not show this import source. |
 | ✅ HM-11 | A dedicated "Quick Connect" command/field is available: typing a string like `user@host[:port]` (via a hotkey or a button in the host manager) establishes an SSH connection immediately, without going through the host-creation dialog and without writing to the `hosts` table. After a successful or unsuccessful (for diagnostics) connection, a "Save as host?" prompt appears — accepting opens a pre-filled host-creation dialog. Entry points: a button in the server panel header; a hotkey; a text link on the no-active-session screen; recognizing a `user@host[:port]`-shaped string in the host manager's search field — on a match, a "Connect" item is shown first, with found hosts listed below it. | Should | SSH-01, HM-01 | Typing `user@192.0.2.10` establishes a connection without first creating a host; after connecting, saving as a host is offered. Each of the four entry points opens quick connect; a string without @ in the search field behaves like a normal search. |
-| ✅ HM-12 | In the host-creation dialog, when the "key" auth method is selected and no suitable key exists, a "Create a new key" button is available. It opens a wizard: (1) generates an Ed25519 key pair with the system `ssh-keygen.exe` (consistent with SEC-04 — no custom cryptography) and saves it to `~/.ssh/id_ed25519_<slug>` (slug — the host name, or the address/username); (2) explains the passphrase in plain language, with the option to leave it empty; it's stored via keytar like any other key; (3) shows the public key with a copy button; (4) an "add the key to the server" step — after the first password connection to the same host, the public key is automatically appended to `~/.ssh/authorized_keys` over the exec channel (an equivalent of `ssh-copy-id`, which Windows doesn't ship with), creating `~/.ssh`/`authorized_keys` with 700/600 permissions if needed, with no duplicates on repeated runs. The "Create a new key" button is only visible when there's no file at the given path on this PC — the host import preview (EXP-02/03) uses the same check to hint that "a new key will be needed" when moving to another PC. | Should | SEC-04, SSH-01 | The wizard creates a key pair via `ssh-keygen.exe`; the public key is correctly added to the target server's `authorized_keys` after a password connection. |
+| ✅ HM-12 | In the host-creation dialog, when the "key" auth method is selected and no suitable key exists, a "Create a new key" button is available. It opens a wizard: (1) generates an Ed25519 key pair with the system `ssh-keygen.exe` on Windows / `ssh-keygen` on Linux (consistent with SEC-04 — no custom cryptography) and saves it to `~/.ssh/id_ed25519_<slug>` (slug — the host name, or the address/username); (2) explains the passphrase in plain language, with the option to leave it empty; it's stored via keytar like any other key; (3) shows the public key with a copy button; (4) an "add the key to the server" step — after the first password connection to the same host, the public key is automatically appended to `~/.ssh/authorized_keys` over the exec channel (an equivalent of `ssh-copy-id`, which Windows doesn't ship with), creating `~/.ssh`/`authorized_keys` with 700/600 permissions if needed, with no duplicates on repeated runs. The "Create a new key" button is only visible when there's no file at the given path on this PC — the host import preview (EXP-02/03) uses the same check to hint that "a new key will be needed" when moving to another PC. | Should | SEC-04, SSH-01 | The wizard creates a key pair via system `ssh-keygen.exe` / `ssh-keygen`; the public key is correctly added to the target server's `authorized_keys` after a password connection. Linux uses POSIX askpass without the passphrase in process arguments or the script body; if `ssh-keygen` is missing, a hint explains how to install `openssh-client`. |
 
 ## 3.3 Terminal
 
@@ -186,8 +194,8 @@ Priority markers: **Must** — required for the 1.0 release, **Should** — impo
 | ✅ DASH-06 | Clicking the mini dashboard opens a "Server dashboard" modal (680px) with CPU/RAM/Disk plus: uptime, load average (1/5/15 min), network ↑/↓ (KB/s or MB/s), ping (TERM-08), top 5 processes by CPU (PID/USER/COMMAND/CPU%/MEM%). | Should | DASH-01 | The modal opens on click and shows all listed metrics on a test server. |
 | ✅ DASH-07 | Network and load are collected over the same exec channel and at the same polling interval as CPU (no increase in poll frequency or SSH channel count). | Must | DASH-02, DASH-06 | The polling interval stays at 10s with the modal open. |
 | ✅ DASH-08 | Server unavailability in the modal — same "—" and banner with no error (DASH-05), including an empty process list. | Must | DASH-05, DASH-06 | Force-closing the exec channel doesn't produce an error in the modal. |
-| ✅ DASH-09 | After a connection is established and the first dashboard poll succeeds, if any metric exceeds its "red" threshold (DASH-03) or `/var/run/reboot-required` exists on the server, a one-time (per session) non-blocking banner is shown: "Disk is 93% full" / "The server needs a reboot after installing updates." With several problems at once — one banner listing all of them, not a series of separate ones. With healthy metrics, no banner is shown at all. The reboot-required check runs once on connect over the same dashboard exec channel — neither the SSH channel count nor the polling frequency increases (DASH-07). | Should | DASH-02, DASH-03, DASH-07 | On a server with disk > 90%, the banner appears once after connecting and doesn't repeat in the same session; on a healthy server, no banner appears. |
-| ✅ DASH-10 | Each finding in the DASH-09 banner can be muted with a "Don't show again" button — persistently, per host and finding type (stored with the host in `hosts.db`), surviving reconnects. A mute resets itself as soon as the finding stops occurring (disk cleaned up / server rebooted) — if it recurs, the banner shows again; there's no separate UI for removing a mute manually. Quick Connect sessions (no saved host) don't show the mute button — there's no host to attach the mute to. | Should | DASH-09 | A muted finding isn't shown on reconnect while the problem persists; once resolved and then recurring, it's shown again; a Quick Connect session has no "Don't show again" button. |
+| ✅ DASH-09 | After a connection is established and the first dashboard poll succeeds, if any metric exceeds its "red" threshold (DASH-03) or `/var/run/reboot-required` exists on the server, a one-time (per Connection) non-blocking banner is shown: "Disk is 93% full" / "The server needs a reboot after installing updates." With several problems at once, each finding gets its own visually separate notification and close button. Closing a notification hides only that finding until the next Connection and does not create a persistent mute (DASH-10). With healthy metrics, no banner is shown at all. The reboot-required check runs once on connect over the same dashboard exec channel — neither the SSH channel count nor the polling frequency increases (DASH-07). The initial metric check runs once per Connection, on the first successful poll: a partial response completes it (a metric unknown at that moment never alerts later), a fully failed poll does not consume it. The first known value strictly below 90% removes that metric's finding until the next Connection (at 90% it is still active; a later spike after recovery creates no new notification); an unknown value (null, exec failure, timeout) temporarily hides the notification without losing the finding — a return to ≥90% shows the still-open finding again. One metric being unavailable does not hide the notifications of the others; metric recovery/hiding does not affect reboot-required. Any new Connection, including an automatic reconnect within the same Session, clears the previous findings and temporary closings and re-runs the initial check; when the new check finds nothing, no old notifications remain. | Should | DASH-02, DASH-03, DASH-07 | On a server with disk > 90%, the banner appears once after connecting and doesn't repeat in the same session; on a healthy server, no banner appears; after a metric drops below 90% the notification disappears, after null it hides and returns at ≥90%. |
+| ✅ DASH-10 | Each finding in the DASH-09 banner can be muted with a "Don't show again" button — persistently, per host and finding type (stored with the host in `hosts.db`), surviving reconnects. A mute resets itself on the first KNOWN value below 90% on any poll (disk cleaned up); an unknown value (null, exec failure, timeout) keeps the mute. Self-clearing does not create a notification in the current Connection — when the same problem recurs after a reconnect, the banner shows again; there's no separate UI for removing a mute manually. Quick Connect sessions (no saved host) don't show the mute button — there's no host to attach the mute to. | Should | DASH-09 | A muted finding isn't shown on reconnect while the problem persists; once resolved and then recurring, it's shown again; a Quick Connect session has no "Don't show again" button; an unavailable metric (null) does not clear the mute. |
 
 ## 3.10 Application settings
 
@@ -208,7 +216,7 @@ Priority markers: **Must** — required for the 1.0 release, **Should** — impo
 
 | ID | Requirement | Priority | Dependency | Acceptance criteria |
 |---|---|---|---|---|
-| ✅ NOTIF-01 | On an SSH connection loss, the app shows a Windows system notification with the host name and a "Reconnect" button, if the window is minimized or not in focus. | Must | TERM-06 | With the window minimized and a connection drop, a system toast appears. |
+| ✅ NOTIF-01 | On an SSH connection loss, the app shows a system notification with the host name and a "Reconnect" button, if the window is minimized or not in focus. | Must | TERM-06 | With the window minimized and a connection drop, a system toast appears. |
 | ✅ NOTIF-02 | When a long-running command finishes (exit code ≠ 0 or runtime > 30s), a system notification appears if the window isn't focused. The threshold is configurable (0 = off). | Should | TERM-01 | A command taking > 30s triggers a toast with the window minimized. |
 | ✅ NOTIF-03 | An event icon with a numeric badge in the app header for: (a) a host fingerprint change (needs action, red badge), (b) an available update, (c) an undetermined guard state on a host (GUARD-08/TERM-10, fail-safe) — the badge stays blue for (b) and (c) (neither outranks (a), and the badge doesn't get a third color), while event (c) gets its own marker in the expanded list (an orange dot). Clicking it expands a compact event list linking to the source. | Should | SSH-04, UPD-01, TERM-10 | A fingerprint change, an available update, and an undetermined guard state all appear in the event list; the badge is only red for a fingerprint event. |
 | ✅ NOTIF-04 | System notifications can be turned off globally under Settings → Interface. | Should | NOTIF-01 | Toasts stop appearing after disabling; the header event icon remains. |
@@ -297,14 +305,15 @@ Priority markers: **Must** — required for the 1.0 release, **Should** — impo
 
 | ID | Requirement | Priority | Dependency | Acceptance criteria |
 |---|---|---|---|---|
-| ✅ SEC-01 | Passwords and passphrases are stored exclusively in Windows Credential Manager. Storing them in configs, SQLite, logs, crash reports, renderer state, or IPC messages is forbidden. | Must | — | A code audit finds no passwords in configs or the database. |
+| ✅ SEC-01 | Passwords and passphrases are stored exclusively through keytar in the system Secret Store: Windows Credential Manager on Windows, Secret Service on Linux. Storing them in configs, SQLite, logs, crash reports, renderer state, or IPC messages is forbidden. An unavailable store never permits a file-based fallback. | Must | — | A code audit finds no passwords in configs or the database. |
 | ✅ SEC-02 | Private keys are never copied into the app directory; the original path is used. No unencrypted temporary copies are created. | Must | — | The app data directory contains no .pem or .key files. |
 | ✅ SEC-03 | The fingerprint is verified on every connection; on a change, the connection is blocked until the user decides. "Connection" here means every established SSH connection, not every tab (see "Connection" in `docs/agent/CONTEXT.md`). | Must | SSH-03, SSH-04 | A fingerprint change blocks the connection. The fingerprint is also verified in the trial connection from the host form ("Test connection"), including the jump-host hop: an unknown or changed key raises the SSH-03/04 modal before any secret is sent. |
 | ✅ SEC-04 | Uses the system OpenSSH or the ssh2 library. Custom cryptography is not allowed. | Must | — | No hand-rolled cryptography among the dependencies. |
 | ✅ SEC-05 | Every BrowserWindow: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, a minimal preload. IPC only via contextBridge, no general-purpose channels; every argument is validated in the main process. | Must | — | The Electron configuration code has the correct flags; the renderer has no access to Node.js or the filesystem. |
-| SEC-06 | Auto-update verifies the package's digital signature and expected publisher before installing. Verification happens in the main process. *(Not applicable to version 1.0 — the installer is unsigned, see NFR-06.)* | Must | UPD-03 | A tampered package, or one signed by a different publisher, is rejected. |
 | ✅ SEC-07 | The app never sends host data, SSH session data, commands, terminal output, keys, or credentials to external services. In 1.0, only the following are allowed: (a) SSH connections to servers the user specifies, and (b) HTTPS requests to the configured update source (GitHub Releases). The update request contains only the technical data inherent to HTTPS plus what's needed to identify the version. There's no telemetry or analytics. | Must | — | The app's network traffic contains only SSH to the specified servers and HTTPS to the update source; no other outbound connections. |
 | ✅ SEC-08 | External links (from the terminal, error database, catalog, UI) are treated as untrusted: the URL is parsed, the protocol is checked (http/https only), the real address is shown, and it opens in the system browser only after a user action. The file:, javascript:, and data: schemes are blocked. | Must | — | Dangerous URL schemes never open; an https link opens after confirmation. |
+
+Versions 1.0 and 1.1 have no signing certificate. Package-signature and publisher checks do not apply to these unsigned releases; checksums do not authenticate a replaced GitHub Release. See NFR-06 and the release strategy.
 
 ---
 
@@ -356,6 +365,7 @@ The new-host dialog has a hint for every field:
 | ✅ NFR-02 | Idle RAM usage (1 tab) ≤ 200 MB. | Should | — | The profiler shows < 200 MB idle. |
 | ✅ NFR-03 | The terminal handles ≥ 50,000 lines/sec with no visible lag. | Must | — | `yes | head -50000` doesn't hang the UI. |
 | ✅ NFR-04 | Supports Windows 10 (1903+) and Windows 11 (x64). | Must | — | Successful launch and core scenarios on both OSes. |
+| ✅ NFR-05 | Windows portable is one exe (`LucidSSH-Portable-<version>-x64.exe`) that runs without administrator rights and keeps the entire profile (settings, hosts, history, `known_hosts`, backups) next to the exe, not in `%APPDATA%`. A new profile gets a mandatory `profile.id`; a missing identity next to existing profile data, an invalid identity, or unwritable profile data blocks startup before stores open. Portable secrets use permanent `credentialId`: copied profiles share access under the same Windows user, and changing an SSH destination detaches that host from its former secret. First launch warns that secrets stay in Windows Credential Manager and do not travel with the folder, private keys are not copied, and profile files are not encrypted. Updates are manual; the app never replaces the portable exe through auto-update. | Should | — | One Windows build produces NSIS Setup and portable exe of one version; `latest.yml` refers only to NSIS and its blockmap. Replacing the portable exe while closed preserves profile data, `profile.id`, and `credentialId`; schema migrations create the required backup. Invalid identity or unwritable profile data blocks startup. |
 | ✅ NFR-06 | The installer is not signed by a trusted certificate. On first download (the GitHub Release description), the Windows "Unknown publisher" warning is explained to the user, along with what it means (no signature, not that the file is dangerous); this is intentionally NOT repeated in the first-launch window, since SmartScreen fires BEFORE launch. Instead, Settings → About has a calm informational line with the same substance and a link to the release page. Package integrity is verified via the published SHA-256 checksum. Every release is submitted to Microsoft Security Intelligence for scanning (best-effort, no guarantees). | Must | UPD-03 | The release description explains the SmartScreen warning and includes the SHA-256 checksum. Settings → About has an informational line with the same substance. Downloaded-package integrity is verified against the checksum. |
 | ✅ NFR-07 | UI language: Russian. All error messages, hints, and UI strings are in Russian. | Must | — | No interface string is in English without a translation. |
 
@@ -373,7 +383,9 @@ The new-host dialog has a hint for every field:
 | Error database | Bundled with the app package | JSON | Updated together with the app |
 | Command database (catalog) | Bundled with the app package | JSON | Updated together with the app |
 
-Files are created with access restricted to the current Windows user. SQL queries are parameterized; string concatenation in SQL is forbidden.
+The table describes the installed Windows profile. Linux uses Electron's system `userData` directory (usually `~/.config/LucidSSH`) and Secret Service; secret addressing stays `LucidSSH/{hostId}`. Windows portable keeps `profile.id`, settings, both databases, `known_hosts`, and backups next to the original exe; its secrets stay in Windows Credential Manager at `LucidSSH/{profileId}/{credentialId}`. The renderer never receives the profile path.
+
+System-profile files have access restricted to the current user. Portable files are not encrypted; protection depends on folder permissions and the filesystem. SQL queries are parameterized; string concatenation in SQL is forbidden.
 
 ---
 
@@ -387,26 +399,26 @@ Files are created with access restricted to the current Windows user. SQL querie
 | SSH | ssh2 (npm) | Mature Node.js SSH library, every key format |
 | UI framework | React + Tailwind CSS | Component-based, convenient styling |
 | Database | better-sqlite3 | Synchronous SQLite for the main process, no dependencies |
-| Secret storage | keytar (npm) | Wrapper around Windows Credential Manager |
-| Build | electron-builder | NSIS installer (x64) |
-| Updates | electron-updater | Auto-update with SHA-256 checksum verification |
+| Secret storage | keytar (npm) | Windows Credential Manager / Linux Secret Service |
+| Build | electron-builder | Windows x64: NSIS Setup and portable exe; Linux x64: AppImage and .deb, from one source commit and version |
+| Updates | electron-updater | SHA-512 verified against metadata for auto-update; SHA-256 published for manual checks |
 
 ---
 
 # 9. Update and signing requirements
 
-> The full strategy is in `Release_and_Update_Strategy.md`. This section lists the requirements with acceptance criteria.
+> The full strategy is in `Release_and_Update_Strategy.md`. Only NSIS and AppImage support auto-update; portable and .deb are manual-only. Actual AppImage update installation remains unverified (§2.2).
 
 | ID | Requirement | Priority | Acceptance criteria |
 |---|---|---|---|
-| ✅ UPD-01 | The app checks GitHub Releases on launch and on manual request, without blocking the UI or SSH. | Must | On a new stable version, its number and changes are shown; without internet, the app keeps working with no intrusive error. |
+| ✅ UPD-01 | NSIS and AppImage check GitHub Releases on launch (if automatic checks are enabled) and on manual request, without blocking the UI or SSH. Portable and .deb show a manual-only state linking to Releases, without invoking electron-updater. | Must | An auto-update-capable build shows a new stable version and changes; without internet, the app keeps working with no intrusive error. Manual-only builds offer a manual link to Releases. |
 | ✅ UPD-02 | Downloading and restarting only happen after a clear user action. | Must | The app never closes an active SSH session without confirmation. |
-| ✅ UPD-03 | Before installing, package integrity is verified by comparing SHA-256 against the checksum published in the GitHub Release. | Must | A corrupted package, or one whose checksum doesn't match, is rejected and not installed. |
+| ✅ UPD-03 | Before automatic installation, electron-updater in main verifies the package's SHA-512 against `sha512` in `latest.yml` (NSIS) / `latest-linux.yml` (AppImage). SHA-256 in the GitHub Release description is for manual checks, not parsed from that text by the app. | Must | A corrupted package, or one whose checksum doesn't match, is rejected and not installed. |
 | ✅ UPD-04 | An update never deletes user data or secrets. A local backup is created before any irreversible database migration. Backups are rotated: the data folder keeps one `backups/pre-update-*` folder and one `<db>.backup-vN` per database; older copies of the same kind are deleted only after the new one is written, so a failed write leaves the previous copy in place. The rule is the same for `hosts.db`, `history.db` and `config.json`. A copy isn't deleted after a successful start: a migration bug that committed the wrong data isn't noticed right away. Copies of `history.db` are also deleted when history is cleared — HIST-08. | Must | After updating from a previous version, prior hosts, history, settings, and Credential Manager entries are still available. After three updates in a row, `backups/` holds one `pre-update-*` folder and each database has at most one `.backup-v*` file. If writing the new copy failed, the previous copy is still there. |
-| ✅ UPD-05 | Every version has a unique number, a Git tag, and a GitHub Release; all update files come from the same build. | Must | An installed previous version detects the release and updates. |
+| ✅ UPD-05 | Every version has a unique number, Git tag, and GitHub Release. Both platforms' artifacts have one source commit and version; each platform's files come from one build of that platform. Publish the draft only after uploading NSIS Setup, blockmap, portable exe, `latest.yml`, AppImage, .deb, and `latest-linux.yml`. `latest.yml` refers only to NSIS, never portable. `latest-linux.yml` must contain a valid AppImage entry and may also contain .deb entries in `files`; the AppImage updater selects AppImage and excludes .deb. The .deb build remains manual-only. | Must | A previous auto-update-capable build detects the release and updates; actual AppImage update installation remains unverified (§2.2). |
 | ✅ UPD-06 | Previous stable versions are kept on GitHub Releases. | Should | The user can manually download a previous installer, unless the release was pulled for security reasons. |
-| ✅ SIGN-01 | The stable installer and update package are signed with a trusted, timestamped Code Signing Certificate. *(Not applicable to version 1.0 — the release ships without a signing certificate.)* | — | Windows file properties show a valid signature and the expected publisher. |
-| ✅ SIGN-02 | The certificate's private key is never stored in the repository or the source code. *(Not applicable to version 1.0 — the release has no certificate.)* | — | Auditing the repository and release files finds no certificate with a private key, password, or access token. |
+| ✅ SIGN-01 | **N/A for 1.0 and 1.1** — releases without a signing certificate. A future signed Windows release must use a trusted, timestamped Code Signing Certificate; returning to signing is a separate future decision with no assigned version. | — | — |
+| ✅ SIGN-02 | Versions 1.0 and 1.1 have no certificate. The certificate's private key must never be stored in the repository or source code, regardless of version. | — | Auditing the repository and release files finds no certificate with a private key, password, or access token. |
 
 ---
 
