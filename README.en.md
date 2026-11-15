@@ -10,7 +10,7 @@
 
 An SSH client for Windows and Linux that explains what's happening and stops you from breaking your server by accident.
 
-> Version **1.1.0**, with Linux packages and Windows portable, is being prepared. Instructions for them follow below; download only artifacts already published in [Releases](https://github.com/Xykyma/LucidSSH/releases).
+> Version **1.1.0** adds Linux x64 (AppImage and `.deb`) and Windows portable. Instructions for them follow below; download only artifacts already published in [Releases](https://github.com/Xykyma/LucidSSH/releases).
 
 ---
 
@@ -71,13 +71,13 @@ No account, no cloud, no telemetry. Passwords live in the system password store 
 
 ### Windows
 
-1. Download `LucidSSH-Setup-x.x.x-x64.exe` from [Releases](https://github.com/Xykyma/LucidSSH/releases).
+1. Download `LucidSSH-Setup-1.1.0-x64.exe` from [Releases](https://github.com/Xykyma/LucidSSH/releases).
 2. Verify the SHA-256 checksum — it's published in the release description.
 3. Run the installer.
 
 #### Portable (starting with 1.1.0)
 
-Download `LucidSSH-Portable-x.x.x-x64.exe`, verify its SHA-256, and put it in a dedicated writable folder. No installation or administrator rights are needed. Settings, hosts, history, `known_hosts`, and backups live next to the exe; to move the profile, close the app and move the whole folder, including `profile.id`.
+Download `LucidSSH-Portable-1.1.0-x64.exe`, verify its SHA-256, and put it in a dedicated writable folder. No installation or administrator rights are needed. Settings, hosts, history, `known_hosts`, and backups live next to the exe; to move the profile, close the app and move the whole folder, including `profile.id`.
 
 Passwords and passphrases stay in Windows Credential Manager and **do not travel with the folder to another PC or user** — enter them again there. Private keys are not copied: check the original key path on the other PC. Profile files are not encrypted; portable makes no promise of leaving no incidental OS traces.
 
@@ -91,8 +91,8 @@ Linux x64 is packaged as AppImage and `.deb` starting with 1.1.0. Before downloa
 
 Download a build from [Releases](https://github.com/Xykyma/LucidSSH/releases):
 
-- **`.deb`** — recommended for Ubuntu and Debian: `sudo apt install ./LucidSSH-x.x.x-amd64.deb`. Updated manually — download the new version from Releases (the button in About opens the page).
-- **`.AppImage`** — `LucidSSH-x.x.x-x86_64.AppImage`: `chmod +x` and run. Supports auto-update; downloading and installing require the user's consent. Actual AppImage update installation has not yet been verified; it is scheduled for the first release with Linux artifacts.
+- **`.deb`** — recommended for Ubuntu and Debian: `sudo apt install ./LucidSSH-1.1.0-amd64.deb`. Updated manually — download the new version from Releases (the button in About opens the page).
+- **`.AppImage`** — `LucidSSH-1.1.0-x86_64.AppImage`: `chmod +x` and run. Supports auto-update; downloading and installing require the user's consent. Actual AppImage update installation has not yet been verified; it is scheduled for the first release with Linux artifacts.
 
 Before running either Linux package, compare its SHA-256 with the release description.
 
@@ -169,4 +169,4 @@ Bug reports and feature requests go through [Issues](https://github.com/Xykyma/L
 
 ## Status
 
-The 1.0 series is released. Version 1.1.0 is being prepared for publication; available files and versions are listed in Releases.
+Application version: **1.1.0**. Published versions and available files are listed in [Releases](https://github.com/Xykyma/LucidSSH/releases).

@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-Prepared for version 1.1.0; not yet released.
+## [1.1.0] — 2026-11-15
 
 Linux verification so far covers Ubuntu 24.04. Ubuntu 22.04, Debian 12, and actual AppImage update installation have not been verified; the update-installation check remains deferred until the first real Linux release.
 
