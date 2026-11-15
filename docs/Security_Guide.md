@@ -1,9 +1,9 @@
-# LucidSSH for Windows: Security Guide
+# LucidSSH: Security Guide
 
 | Field | Value |
 |---|---|
-| Document version | 1.1 |
-| Date | June 23, 2026 |
+| Document version | 1.3 |
+| Date | November 15, 2026 |
 | Related documents | `TZ.md` (section 4 — requirements SEC-01…08), `Data_Structures.md`, `Release_and_Update_Strategy.md` |
 
 > This document is the normative basis for requirements SEC-01…SEC-08, TERM-07, HIST-07, and UPD/SIGN in the spec. When convenience and security conflict, security wins.
@@ -43,7 +43,7 @@ LucidSSH must protect against:
 - interception of SSH traffic;
 - SSH server spoofing;
 - accidentally saving secrets to files or logs;
-- the interface performing arbitrary operations on Windows;
+- the interface performing arbitrary operations on the operating system;
 - malicious output from the remote server;
 - accidentally sending multi-line and recognized dangerous commands;
 - a tampered installer or update;
@@ -51,11 +51,13 @@ LucidSSH must protect against:
 
 LucidSSH cannot fully protect against:
 
-- malware already running as the Windows user;
+- malware already running as the OS user;
 - the computer's administrator;
 - physical access to an unlocked computer;
 - actions the user knowingly confirmed;
 - every possible destructive shell command.
+
+LucidSSH makes no "zero trace" promise: a portable profile keeps its data next to the exe and doesn't encrypt it (§18.1), and Chromium caches, the portable launcher's temporary extraction, and OS-level incidental traces are outside the app's control.
 
 The interface must never promise absolute protection. For example, the guard should be described as a way to warn about recognized dangerous commands, not as a guarantee that blocks every dangerous operation.
 
@@ -201,7 +203,7 @@ The mandatory connection sequence:
 
 1. The renderer passes only `hostId` to main.
 2. Main loads the host's settings from SQLite.
-3. Main fetches the password or passphrase from Windows Credential Manager, if needed.
+3. Main fetches the password or passphrase from the system Secret Store (Windows Credential Manager / Linux Secret Service), if needed.
 4. Main opens a connection to the given address and port.
 5. Main fetches and verifies the host key.
 6. On a new or changed key, the connection waits for the user's decision.
@@ -212,9 +214,9 @@ The mandatory connection sequence:
 
 The renderer must never know the password, passphrase, or private-key contents at any stage.
 
-## 10. Passwords and Windows Credential Manager
+## 10. Passwords and the system Secret Store
 
-Server passwords and key passphrases are stored only in Windows Credential Manager, via `keytar`.
+Server passwords and key passphrases are stored only via `keytar`: Windows Credential Manager on Windows, Secret Service (gnome-keyring/KWallet) on Linux. If the store is unavailable, saving a secret reports an error; the app can work without a saved secret, but a file-based fallback is forbidden.
 
 They must never be saved:
 
@@ -227,7 +229,9 @@ They must never be saved:
 - in renderer state;
 - in IPC messages.
 
-SQLite stores no secrets — only the record's identity. The installed build and other platforms address the record by the former `LucidSSH/{hostId}` (no migration of existing secret-store records needed). A portable profile addresses it as `LucidSSH/{profileId}/{credentialId}`, where `credentialId` is a permanent UUID in `hosts.db`: hosts copied along with the profile keep a shared secret on the same PC, while identical numeric ids in different profiles and independent copies get no access to each other's records. `credentialId` is main-only — never part of the renderer model, export/import, `AppInfo`, or logs. When a host is deleted, the associated Credential Manager entry must also be removed after user confirmation.
+SQLite stores no secrets — only the record's identity. The installed build and other platforms address the record by the former `LucidSSH/{hostId}` (no migration of existing secret-store records needed). A portable profile addresses it as `LucidSSH/{profileId}/{credentialId}`, where `credentialId` is a permanent UUID in `hosts.db`: hosts copied along with the profile keep a shared secret on the same PC, while identical numeric ids in different profiles and independent copies get no access to each other's records. `credentialId` is main-only — never part of the renderer model, export/import, `AppInfo`, or logs. When a host is deleted, the associated system Secret Store entry must also be removed after user confirmation.
+
+Changing the SSH destination (`address`/`port`/`username`/`auth_method`/`key_path`) mints a new `credentialId` in a portable profile — the former shared secret of profile copies is neither overwritten nor deleted; in the installed build the old secret is deleted or replaced by the new one. The old secret can never be sent to the changed destination. Changing only the password/passphrase without a destination change keeps the identity and updates the shared secret of all copies.
 
 The password field in the UI must never auto-fill with the actual saved value. The interface only shows a "password saved" state.
 
@@ -241,7 +245,7 @@ Mandatory rules:
 - key contents are never passed to the renderer;
 - key contents are never saved to SQLite or logs;
 - no temporary unencrypted copies of the key are created;
-- the passphrase is stored in Credential Manager;
+- the passphrase is stored in the system Secret Store;
 - before use, verify a regular file of an acceptable size was selected;
 - read errors must never expose the key's contents.
 
@@ -343,7 +347,7 @@ Requirements:
 - never save terminal output by default;
 - allow deleting an individual entry and clearing history;
 - never expose a masked secret via search or export;
-- restrict access to the SQLite file to the current Windows user.
+- restrict access to the SQLite file to the current OS user.
 
 Automatically deleting old entries once a limit is hit does not replace manual cleanup and secret masking.
 
@@ -357,7 +361,7 @@ Production logs must never contain:
 - full terminal output;
 - clipboard contents;
 - raw IPC objects;
-- Credential Manager data.
+- system Secret Store data.
 
 Internal IDs and safe error categories are used instead of secret values.
 
@@ -383,13 +387,13 @@ LucidSSH's storage:
 |---|---|
 | Hosts and groups | SQLite |
 | History | SQLite |
-| Passwords and passphrases | Windows Credential Manager |
+| Passwords and passphrases | Windows Credential Manager / Linux Secret Service |
 | Known hosts | A local file in OpenSSH format |
 | Settings | JSON, no secrets |
 
 Requirements:
 
-- files are created with access restricted to the current user, as far as Windows supports it;
+- system-profile files have access restricted to the current user, as far as the OS supports it; a portable folder depends on its permissions and filesystem (§18.1);
 - SQL queries are parameterized;
 - values are never combined into SQL via string concatenation;
 - input data has length limits;
@@ -397,6 +401,20 @@ Requirements:
 - backups and exports must never silently include secrets.
 
 Full SQLite encryption doesn't protect against malware running as the user, and it doesn't replace properly storing secrets.
+
+### 18.1 Portable profile
+
+The portable exe keeps the entire profile (`profile.id`, `config.json`, both databases, `known_hosts`, backups) next to the exe instead of `%APPDATA%`. The impact on the protection model:
+
+- profile files are **not encrypted** — access to the folder means access to hosts, history, and settings; there is no "zero trace" promise (see §2): Chromium caches, the portable launcher's temporary extraction, and OS-level incidental traces are outside the app's control;
+- secrets still live only in Windows Credential Manager (SEC-01) and are not part of the profile folder: DPAPI is bound to the user/machine, so secrets don't travel between machines — an architectural limitation the user is warned about once on first launch;
+- private keys are not copied by the portable profile either (SEC-02): original paths are used, and the key may not exist at that path on another machine;
+- profile identity is protected by the mandatory `profile.id` (not a secret — SEC-01 is unaffected): a missing or corrupted `profile.id`, or an inability to write any profile file, blocks the launch before any store is opened — partial operation without saving, or a silent switch to another profile, is forbidden;
+- secret-store isolation for portable hosts relies on the `LucidSSH/{profileId}/{credentialId}` address (§10): a copied profile keeps a shared secret on the same PC, and changing the SSH destination detaches the record from the former secret so the changed host never receives someone else's;
+- the portable app never replaces its own files via auto-update (manual-only): replacing the executable is only possible through user action outside the app, removing the "an update swapped the portable exe" attack class;
+- moving the profile folder to another drive is a user action; the app never copies or syncs the profile on its own.
+
+Rationale: `docs/agent/adr/0020-portable-profile-and-credential-identity.md`.
 
 ## 19. Shell integration, breadcrumb, and dashboard
 
@@ -431,15 +449,17 @@ An update must pass several checks:
 - protection against installing an older, vulnerable version;
 - an atomic install with safe recovery on failure.
 
-**Version 1.0 ships unsigned** (see `Release_and_Update_Strategy.md` §9). So in 1.0 the following do not apply:
+**Versions 1.0 and 1.1 ship without a signing certificate** (see `Release_and_Update_Strategy.md` §9). The following do not apply to them:
 
 - the installer package carries a digital signature;
 - the expected publisher is verified;
 - an unsigned package is rejected.
 
-These three checks return together with signing in a future version.
+These three checks belong to a future signed Windows release; its version has not been assigned.
 
-HTTPS protects the download in transit; the checksum protects against a corrupted file. Only a digital signature confirms the file's origin: the checksum is published in the same GitHub Release as the package itself, so it does not protect against a replaced release. 1.0 does not have this protection — it is a residual risk of shipping unsigned.
+NSIS and AppImage support auto-update with user consent; Windows portable and .deb are manual-only and never invoke electron-updater to check, download, or install. For auto-update, main verifies SHA-512 against `sha512` in the platform's metadata; SHA-256 in the release description is for manual verification of a downloaded file.
+
+HTTPS protects the download in transit; a checksum protects against corruption. Only a trusted digital signature confirms the file's origin: the checksum is published in the same GitHub Release as the package, so it does not protect against a replaced release. Versions 1.0 and 1.1 lack this protection — a residual risk of shipping unsigned.
 
 The update check is a separately allowed network connection. So the "no external traffic" requirement should be phrased as: the app only ever creates SSH connections, an explicitly initiated update check against a specified domain, and any other separately documented connections.
 
@@ -453,9 +473,9 @@ Supply-chain requirements:
 - keep Electron, `ssh2`, xterm.js, and native modules up to date;
 - minimize the number of dependencies;
 - never load executable code at runtime;
-- keep the signing certificate and its password outside the repository — **N/A for 1.0, unsigned release (see §20)**, a principle for the future;
+- keep the signing certificate and its password outside the repository (1.0 and 1.1 have no certificate; the prohibition applies regardless of version);
 - never publish secrets in CI logs or artifacts;
-- sign production builds and the installer — **N/A for 1.0, unsigned release (see §20)**, a principle for the future.
+- sign production builds and the installer — **N/A for 1.0 and 1.1, releases without a certificate (see §20)**, a principle for a future signed Windows release.
 
 ## 22. External links
 
@@ -499,7 +519,7 @@ Before shipping, verify:
 - commands with common tokens are masked in history;
 - `ProxyCommand`, `LocalCommand`, and `Match exec` are never executed on import;
 - a tampered update is rejected;
-- the production build is signed — **N/A for 1.0, unsigned release (see §20)**; instead: the SHA-256 checksum is published in the GitHub Release;
+- the production build is signed — **N/A for 1.0 and 1.1, releases without a certificate (see §20)**; publish SHA-256 for every user-facing package in the GitHub Release, and verify SHA-512 from metadata for auto-update;
 - dependencies have been checked for critical known vulnerabilities.
 
 ## 25. Rule for Claude when writing code
@@ -523,14 +543,14 @@ LucidSSH uses defense in depth:
 
 1. SSH encrypts the connection.
 2. The fingerprint confirms the server.
-3. Credential Manager protects passwords.
+3. The system Secret Store protects passwords.
 4. The main process isolates secrets and system operations.
 5. IPC only allows specific actions.
-6. The renderer has no direct access to Windows or Node.js.
+6. The renderer has no direct access to the OS or Node.js.
 7. Terminal output is treated as untrusted.
 8. History is scrubbed of likely secrets.
 9. The guard reduces the risk of user error.
-10. Signing protects updates.
+10. A trusted signature will authenticate updates in a future signed Windows release; current checksums verify integrity, not the publisher (§20).
 11. Dependency auditing closes known vulnerabilities.
 
 One layer failing must never automatically grant access to all the others.

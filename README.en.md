@@ -8,7 +8,9 @@
 
 <p align="center"><a href="README.md">🇷🇺 Русский</a> | 🇬🇧 English</p>
 
-An SSH client for Windows (Linux coming soon) that explains what's happening and stops you from breaking your server by accident.
+An SSH client for Windows and Linux that explains what's happening and stops you from breaking your server by accident.
+
+> Version **1.1.0**, with Linux packages and Windows portable, is being prepared. Instructions for them follow below; download only artifacts already published in [Releases](https://github.com/Xykyma/LucidSSH/releases).
 
 ---
 
@@ -73,16 +75,26 @@ No account, no cloud, no telemetry. Passwords live in the system password store 
 2. Verify the SHA-256 checksum — it's published in the release description.
 3. Run the installer.
 
-**About the Windows SmartScreen warning.** Version 1.0 ships without a code-signing certificate — that's a deliberate, deferred decision, not an oversight. Because of this, Windows may show a "Windows protected your PC" warning on first launch. This is expected for new unsigned apps and doesn't mean the file is corrupted — click "More info" → "Run anyway". You can additionally verify the SHA-256 checksum against the downloaded file if you want extra assurance.
+#### Portable (starting with 1.1.0)
+
+Download `LucidSSH-Portable-x.x.x-x64.exe`, verify its SHA-256, and put it in a dedicated writable folder. No installation or administrator rights are needed. Settings, hosts, history, `known_hosts`, and backups live next to the exe; to move the profile, close the app and move the whole folder, including `profile.id`.
+
+Passwords and passphrases stay in Windows Credential Manager and **do not travel with the folder to another PC or user** — enter them again there. Private keys are not copied: check the original key path on the other PC. Profile files are not encrypted; portable makes no promise of leaving no incidental OS traces.
+
+Updates are manual: with the app closed, replace only the exe with the new file from Releases, keeping the other profile files. Do not delete or regenerate `profile.id`.
+
+**About the Windows SmartScreen warning.** Versions 1.0 and 1.1 ship without a code-signing certificate; returning to signing is a separate future decision. Windows may therefore show a "Windows protected your PC" warning. The warning alone proves neither that the file is dangerous nor that it is safe. If you trust the source and choose to proceed, Windows offers "More info" → "Run anyway". Compare the downloaded file's SHA-256 with the release description: this verifies integrity, but does not protect against replacement of the GitHub Release itself.
 
 ### Linux
 
-> **Linux builds arrive in version 1.1.** They are not in the current release yet; the section below describes how things will work.
+Linux x64 is packaged as AppImage and `.deb` starting with 1.1.0. Before downloading, check that the selected release already contains Linux artifacts.
 
 Download a build from [Releases](https://github.com/Xykyma/LucidSSH/releases):
 
 - **`.deb`** — recommended for Ubuntu and Debian: `sudo apt install ./LucidSSH-x.x.x-amd64.deb`. Updated manually — download the new version from Releases (the button in About opens the page).
-- **`.AppImage`** — for other distributions: `chmod +x` and run. Updates automatically.
+- **`.AppImage`** — `LucidSSH-x.x.x-x86_64.AppImage`: `chmod +x` and run. Supports auto-update; downloading and installing require the user's consent. Actual AppImage update installation has not yet been verified; it is scheduled for the first release with Linux artifacts.
+
+Before running either Linux package, compare its SHA-256 with the release description.
 
 Saving passwords requires Secret Service — gnome-keyring or KWallet (usually already present in GNOME and KDE). Without it the app works, but passwords can't be saved: connect with a key or type the password each time.
 
@@ -105,7 +117,7 @@ The key-creation wizard needs `ssh-keygen`: `sudo apt install openssh-client`.
 
 ### System requirements
 
-- Windows 10 (version 1903+) or Windows 11, x64; or Linux x64 (Ubuntu 22.04+ or equivalent)
+- Windows 10 (version 1903+) or Windows 11, x64; or Linux x64. Linux packages have been tested on Ubuntu 24.04; Ubuntu 22.04, Debian 12, and other distributions have not been tested separately.
 - 200 MB RAM idle
 
 ---
@@ -115,17 +127,19 @@ The key-creation wizard needs `ssh-keygen`: `sudo apt install openssh-client`.
 LucidSSH collects no telemetry, requires no account, and sends data nowhere except your own servers. The only outbound traffic the app initiates itself:
 
 - SSH connections to the hosts you add;
-- a check for new versions against GitHub Releases (on demand and at startup, non-blocking).
+- in the NSIS build and AppImage, a check for new versions against GitHub Releases (on demand and at startup if automatic checks are enabled, non-blocking). Portable and `.deb` never invoke auto-update; they offer to open Releases in the system browser.
 
 Passwords are stored in the system password store: Windows Credential Manager, or Secret Service (gnome-keyring, KWallet) on Linux. Private keys are never copied into the app's directory — the original path on disk is used.
 
 ---
 
-## What's not in version 1.0
+## What's not in the app yet
 
 An SFTP browser, Mosh, Telnet, RDP, VNC, X11, Serial, cloud sync, and a mobile version — either planned for future releases or not planned at all.
 
-Local, offline AI-powered explanations are planned for version 1.2, to complement the built-in databases for rare commands and non-standard errors. In version 1.0, the built-in command and error databases already provide immediate value — no model downloads, no setup.
+Local, offline AI-powered explanations are planned for a future release, to complement the built-in databases for rare commands and non-standard errors. The built-in command and error databases already provide immediate value — no model downloads, no setup.
+
+A light theme, additional hotkeys, an absolute path in the Guard dialog, and snippet placeholders are planned after 1.1.0; exact versions have not been assigned.
 
 ---
 
@@ -155,4 +169,4 @@ Bug reports and feature requests go through [Issues](https://github.com/Xykyma/L
 
 ## Status
 
-Version 1.0 is released.
+The 1.0 series is released. Version 1.1.0 is being prepared for publication; available files and versions are listed in Releases.
